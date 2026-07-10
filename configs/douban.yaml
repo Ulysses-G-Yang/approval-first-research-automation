@@ -1,0 +1,28 @@
+name: "douban-top250"
+start_url: "https://movie.douban.com/top250"
+enable_adaptive: true
+pagination:
+  enabled: true
+  next_selector: ".next a"
+  max_pages: 2
+  delay_ms: 1000
+fields:
+  - name: "title"
+    selector: ".title"
+  - name: "rating"
+    selector: ".rating_num"
+  - name: "quote"
+    selector: ".inq"
+item_selector: ".grid_view .item"
+browser:
+  headless: true
+  stealth: true
+  launch:
+    executable_path: "C:/Program Files/Google/Chrome/Application/chrome.exe"
+llm:
+  enable_repair: false
+  provider: "gemini"
+  api_key: "YOUR_API_KEY"
+  model: "gemini-2.5-flash"
+  endpoint: ""
+  timeout: 10

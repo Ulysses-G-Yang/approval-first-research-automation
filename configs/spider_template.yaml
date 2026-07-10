@@ -1,0 +1,58 @@
+name: my-generic-spider
+description: 通用爬虫配置示例
+
+enable_adaptive: true
+# 开关说明：
+# - true：优先使用原 selector；找不到时自动走 Scrapling 自适应模式(page.css(selector, adaptive=True) 风格)。
+# - false：仅使用原 selector，失败字段返回空字符串，便于稳定场景排查。
+# 备注：若要使用 adaptive，环境需安装 scrapling（本仓库已在 requirements.txt 中声明）。
+
+browser:
+  headless: false
+  launch:
+    slow_mo: 0
+  context: {}
+  stealth: false  # true 开启 playwright-stealth，但需要安装并正确配置
+
+llm:
+  enable_repair: false
+  provider: "gemini"
+  api_key: "YOUR_API_KEY"
+  model: "gemini-2.5-flash"
+  endpoint: ""
+  timeout: 10
+
+request:
+  timeout_ms: 30000
+  wait_until: domcontentloaded
+  wait_for_selector: ""
+
+start_url: ""
+start_urls: []
+
+pagination:
+  enabled: false
+  max_pages: 1
+  next_selector: ""
+  delay_ms: 0
+
+item_selector: ""
+payload_key: payload
+
+fields:
+  - name: title
+    source: "payload.title"
+    selector: ""
+    scope: page
+  - name: url
+    source: "page_url"
+
+actions:
+  - name: example_extract
+    type: evaluate
+    result_key: payload
+    as_records: true
+    script: >
+      () => {
+        return [];
+      }

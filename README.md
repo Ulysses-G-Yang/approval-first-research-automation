@@ -1,69 +1,117 @@
-# 淘宝攻防演练 - 反爬虫研究项目
+# 自我修复的通用网页数据采集框架
 
-> 本项目用于淘宝/天猫平台的反爬虫攻防演练，探索在合规边界内自动化采集公开商品信息的技术方案。
+> 一个自带自适应 + LLM 智能修复能力的通用网页数据采集框架。
 
-## 项目背景
+[![CI](https://github.com/3023345758/Taobao-Anti-Scraping-Project/actions/workflows/ci.yml/badge.svg)](https://github.com/3023345758/Taobao-Anti-Scraping-Project/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-针对淘宝/天猫的反爬机制进行系统性研究，测试各类自动化采集手段的可行性与局限性，为安全评估提供技术参考。
+## 功能演示
 
-## 核心脚本
+`GIF 占位：docs/assets/demo.gif`
 
-| 脚本 | 功能 | 说明 |
-|------|------|------|
-| `extract_prices.py` | SKU 价格采集 | 自动登录态，批量提取商品 SKU 价格信息，输出 Excel |
-| `extract_lite.py` | 精简采集版 | 仅提取 itemId/标题/销量，保留全部防封策略，1000 条自动停止 |
-| `batch_collect.py` | 批量品类采集 | 品类词 × 补贴词组合搜索，自动翻页收集商品 ID |
-| `collect_ids.py` | 搜索页 ID 收集 | 小批量翻页收集商品 ID，关键词随机轮换 |
-| `search_api.py` | CDP 接管提取 | 通过 Chrome DevTools Protocol 接管浏览器，提取搜索结果中的商品 ID |
-| `anonymous_probe.py` | 未登录态探测 | 探测淘宝 API 在未登录状态下的数据边界 |
-| `analyze_html.py` | HTML 分析 | 快速分析保存的搜索结果页 HTML 结构 |
+框架将站点差异收敛到 YAML 配置，并在字段提取失败时依次尝试常规 CSS selector、Scrapling 自适应解析和可选 LLM selector 修复。每一步都有日志与降级，不把“没有数据”伪装成成功。
 
-## 技术栈
-
-- **Python 3.10+**
-- **Playwright** — 浏览器自动化，支持 CDP 接管真实浏览器
-- **Pandas** — 数据处理与 Excel 输出
-- **Windows Credential Manager** — 凭证管理
-
-## 防封策略
-
-本项目实现了一套完整的反检测机制：
-
-- **状态机浏览模拟** — 模拟真实用户的浏览行为模式
-- **登录心跳维持** — 保持会话活跃
-- **时段控制** — 避开非活跃时段
-- **每日采集上限** — 控制请求频率
-- **同店铺检测** — 避免短时间内大量访问同一店铺
-- **随机延迟** — 页间/操作间随机等待
-- **弹窗自动关闭** — 处理广告和登录弹窗
-
-## 数据输出
-
-- `sku_prices_complete.xlsx` — 完整 SKU 价格数据
-- `sku_prices_complete.csv` — CSV 格式备份
-- `search_ids.json` — 搜索收集的商品 ID 列表
-- `snapshots/` — 页面快照存档
-
-## 使用方式
+## 快速开始
 
 ```bash
-# 安装依赖
-pip install playwright pandas
-playwright install chromium
-
-# 批量采集商品 ID
-python batch_collect.py 10
-
-# 精简模式采集（1000 条自动停止）
-python extract_lite.py
-
-# 从已有 ID 提取价格
-python extract_prices.py
+conda env create -f environment.yml && conda activate generic-crawler-py312 && playwright install chromium && python extract_prices.py --config configs/douban.yaml --output output/douban.jsonl
 ```
 
-## 免责声明
+本项目以 Python 3.12 作为验证运行时。也可以手动创建环境后安装依赖：
 
-本项目仅供安全研究和学习交流使用，不得用于任何违反平台服务条款或法律法规的用途。使用者需自行承担使用风险。
+```bash
+pip install -r requirements.txt
+playwright install chromium
+```
+
+## 三层提取机制
+
+1. **配置 selector**：字段由 YAML 中的 CSS selector、属性和作用域定义，是默认且最快的路径。
+2. **Scrapling 自适应解析**：常规 selector 返回空时，使用相同字段标识在页面 HTML 中尝试自适应定位。
+3. **LLM selector 修复**：前两层均失败时，只有显式开启后才调用 Gemini 或 Qwen，返回候选 selector 并仅在当前页面重试一次。
+
+LLM 修复默认关闭，候选 selector 会按“页面 URL + 字段名”缓存。API 调用超时、依赖缺失或模型返回无效内容时，任务记录日志并继续，不会中断整次采集。
+
+## 配置驱动
+
+新站点通常只需要新增一个 YAML 文件：
+
+```yaml
+name: example-listing
+start_url: "https://example.com/list"
+enable_adaptive: true
+
+pagination:
+  enabled: true
+  next_selector: ".next a"
+  max_pages: 2
+
+item_selector: ".card"
+fields:
+  - name: title
+    selector: ".title"
+  - name: price
+    selector: ".price"
+
+llm:
+  enable_repair: false
+  provider: gemini
+  api_key: "YOUR_API_KEY"
+  model: gemini-2.5-flash
+  timeout: 10
+```
+
+完整字段、分页、浏览器与动作示例见 [configs/spider_template.yaml](configs/spider_template.yaml)。包含真实 API Key 的配置请保存为 `*.local.yaml`，不要提交。
+
+## 验证与测试
+
+豆瓣 Top250 配置用于手动验证：
+
+```bash
+python extract_prices.py --config configs/douban.yaml --output output/douban.jsonl
+python scripts/verify.py --artifacts-dir output/verification
+```
+
+第二条命令会先运行正常 selector，再自动注入错误 selector。它只有在 `title` 和 `rating` 非空、且日志出现 `ADAPTIVE_SUCCESS` 事件时才会通过。该命令会访问豆瓣，请仅在符合网站条款和当地法律的前提下运行。
+
+离线测试不访问任何第三方站点：
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+## 典型教育案例：淘宝配置
+
+[configs/taobao.yaml](configs/taobao.yaml) 是将早期单站点逻辑迁移到配置驱动结构的教学案例。它不代表对任何平台的兼容性承诺，也不应用于绕过访问控制、采集非公开数据或违反服务条款。
+
+早期版本保存在 [v1.0-educational](https://github.com/3023345758/Taobao-Anti-Scraping-Project/tree/v1.0-educational)，背景与边界见 [教育归档说明](docs/EDUCATIONAL_VERSION.md)。
+
+## 文章草稿工具
+
+`scripts/publish_articles.py` 一次只处理一个平台，默认仅保存草稿：
+
+```bash
+python scripts/publish_articles.py --platform juejin --mode draft
+```
+
+正式发布必须显式使用 `--mode publish`。脚本只有获得公开文章 URL 才会报告发布成功；失败时默认保留当前窗口以便人工处理。浏览器登录状态位于本机用户数据目录，永远不会写入仓库。
+
+## 项目结构
+
+```text
+configs/       站点与模板配置
+core/          通用爬虫引擎与 LLM 修复模块
+docs/          教育归档、技术文章与发布说明
+scripts/       现场验证与文章草稿工具
+tests/         离线夹具与单元测试
+```
+
+## 安全与贡献
+
+- 不提交 API Key、Cookie、浏览器 profile、私有页面数据或采集结果。
+- 贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，安全问题见 [SECURITY.md](SECURITY.md)。
+- 本项目仅用于合法、获得授权的数据采集与工程研究；使用者须自行遵守适用法律、网站政策与速率限制。
 
 ## License
 

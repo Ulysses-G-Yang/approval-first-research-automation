@@ -1,0 +1,181 @@
+name: taobao-educational
+description: 淘宝硬编码采集逻辑的 YAML 迁移版本（用于教学）
+
+browser:
+  headless: false
+  launch:
+    slow_mo: 250
+  context:
+    viewport:
+      width: 1366
+      height: 900
+  stealth: false
+
+llm:
+  enable_repair: false
+  provider: "gemini"
+  api_key: "YOUR_API_KEY"
+  model: "gemini-2.5-flash"
+  endpoint: ""
+  timeout: 10
+
+request:
+  timeout_ms: 30000
+  wait_until: networkidle
+  wait_for_selector: body
+
+start_url: ""
+start_urls: []
+
+pagination:
+  enabled: false
+  max_pages: 1
+
+fields:
+  - name: itemId
+    source: payload.item.itemId
+  - name: 商品标题
+    source: payload.item.title
+  - name: skuId
+    source: skuId
+  - name: SKU名称
+    source: SKU名称
+  - name: 页面价(元)
+    source: 页面价(元)
+  - name: 原价(元)
+    source: 原价(元)
+  - name: 券后价(元)
+    source: 券后价(元)
+  - name: 优惠信息
+    source: 优惠信息
+  - name: 库存
+    source: 库存
+  - name: 卖家昵称
+    source: 卖家昵称
+  - name: 店铺名称
+    source: 店铺名称
+  - name: 爬取时间
+    source: 爬取时间
+  - name: 来源页
+    source: page_url
+
+actions:
+  - name: extract_taobao_rows
+    type: evaluate
+    result_key: payload
+    script: >
+      () => {
+        return [];
+      }
+  - name: extract_taobao_rows_list
+    type: evaluate
+    as_records: true
+    script: |
+      () => {
+        const scripts = document.querySelectorAll('script');
+        let target = null;
+        scripts.forEach((s) => {
+          const text = s.textContent || s.innerText || '';
+          if (text.includes('ICE_APP_CONTEXT') && text.includes('sku2info')) {
+            target = text;
+          }
+        });
+        if (!target) return [];
+
+        const match = target.match(/var\\s+b\\s*=\\s*(\\{.*)/);
+        if (!match) return [];
+
+        let jsonStr = match[1];
+        let braceCount = 0;
+        let endPos = 0;
+        for (let i = 0; i < jsonStr.length; i++) {
+          if (jsonStr[i] === '{') braceCount++;
+          else if (jsonStr[i] === '}') {
+            braceCount--;
+            if (braceCount === 0) { endPos = i + 1; break; }
+          }
+        }
+        let data;
+        try {
+          data = JSON.parse(jsonStr.substring(0, endPos));
+        } catch (e) {
+          return [];
+        }
+
+        const res = data?.loaderData?.home?.data?.res;
+        if (!res) return [];
+
+        const item = res.item || {};
+        const seller = res.seller || {};
+        const skus = res.skuBase && res.skuBase.skus && res.skuBase.skus.length ? res.skuBase.skus : [];
+        const props = res.skuBase ? res.skuBase.props || [] : [];
+        const sku2info = res.skuCore ? res.skuCore.sku2info || {} : {};
+        const propMap = {};
+        props.forEach((prop) => {
+          (prop.values || []).forEach((v) => {
+            propMap[v.vid] = v.name;
+          });
+        });
+
+        const itemTitle = item.title || '';
+        const hasSubsidy = itemTitle.includes('补贴');
+        const subsidyRate = itemTitle.includes('15%') ? 0.15 : 0;
+
+        let targetSkus = skus;
+        if (!targetSkus.length) {
+          const fallback = sku2info['0'] || sku2info['0;0'];
+          if (fallback) {
+            targetSkus = [{ skuId: '0', propPath: '', quantity: fallback.quantity || '' }];
+          } else {
+            targetSkus = [];
+          }
+        }
+
+        const rows = [];
+        targetSkus.forEach((sku) => {
+          const skuId = sku.skuId || '';
+          const propPath = sku.propPath || '';
+          const attrs = [];
+          if (propPath) {
+            propPath.split(';').forEach((pair) => {
+              if (!pair.includes(':')) return;
+              const parts = pair.split(':');
+              const vid = parts[1];
+              if (propMap[vid]) attrs.push(propMap[vid]);
+            });
+          }
+
+          const info = sku2info[skuId] || {};
+          const pagePrice = typeof info.price === 'string'
+            ? info.price
+            : (info.price ? String(info.price.priceText || '') : '');
+          let originalPrice = '';
+          let couponPrice = '';
+          if (pagePrice) {
+            const n = parseFloat(pagePrice);
+            if (!isNaN(n) && hasSubsidy && subsidyRate > 0) {
+              originalPrice = String(Math.round(n / (1 - subsidyRate)));
+            }
+            if (hasSubsidy) {
+              couponPrice = pagePrice;
+            }
+          }
+
+          rows.push({
+            "itemId": String(item.itemId || ''),
+            "商品标题": itemTitle,
+            "skuId": String(skuId),
+            "SKU名称": attrs.join(' + ') || '',
+            "页面价(元)": pagePrice,
+            "原价(元)": originalPrice,
+            "券后价(元)": couponPrice,
+            "优惠信息": hasSubsidy ? "国家补贴" + Math.round(subsidyRate * 100) + "%" : "",
+            "库存": info.quantity || '',
+            "卖家昵称": seller.sellerNick || '',
+            "店铺名称": seller.shopName || '',
+            "来源页": location.href
+          });
+        });
+
+        return rows;
+      }

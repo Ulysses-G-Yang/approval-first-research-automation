@@ -1,0 +1,33 @@
+# Python bytecode and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local environments and secrets
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+*.local.yaml
+
+# Crawler output and local verification artifacts
+output/
+output_*.json
+output_*.jsonl
+output_*.csv
+douban_top250*.json
+douban_top250*.jsonl
+configs/*-broken-auto.yaml
+configs/*-systemchrome.yaml
+
+# Browser profiles contain session cookies and must never be committed
+scripts/publish_states/
+scripts/browser_state/
+
+# Logs and editor settings
+*.log
+.vscode/
+.idea/

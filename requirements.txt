@@ -1,0 +1,6 @@
+playwright>=1.61,<2
+PyYAML>=6,<7
+scrapling>=0.4.10,<0.5
+playwright-stealth>=2.0,<3
+google-genai>=1,<2
+dashscope>=1.24,<2

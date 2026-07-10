@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - feat/general-crawler
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements.txt
+      - run: python -m py_compile extract_prices.py core/spider_engine.py core/llm_repair.py scripts/verify.py scripts/publish_articles.py
+      - run: python -m unittest discover -s tests -v
