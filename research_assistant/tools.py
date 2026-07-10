@@ -714,6 +714,8 @@ class BrowserExtractTool:
 
 def build_default_registry() -> "ToolRegistry":
     from .registry import ToolRegistry
+    from .content_tools import ContentPrepareDraftTool
+    from .document_tools import DocumentConvertTool, DocumentInspectTool, MarkdownValidateTool
 
     registry = ToolRegistry()
     for tool in (
@@ -722,6 +724,10 @@ def build_default_registry() -> "ToolRegistry":
         FileReadTool(),
         UrlListReadTool(),
         BrowserExtractTool(),
+        DocumentInspectTool(),
+        DocumentConvertTool(),
+        MarkdownValidateTool(),
+        ContentPrepareDraftTool(),
         DataNormalizeTool(),
         MarkdownTableTool(),
         ReportSummarizeTool(),
@@ -729,3 +735,25 @@ def build_default_registry() -> "ToolRegistry":
     ):
         registry.register(tool)
     return registry
+
+
+from .content_tools import ContentPrepareDraftTool
+from .document_tools import DocumentConvertTool, DocumentInspectTool, MarkdownValidateTool
+
+__all__ = [
+    "BrowserExtractTool",
+    "ContentPrepareDraftTool",
+    "DataNormalizeTool",
+    "DocumentConvertTool",
+    "DocumentInspectTool",
+    "FileReadTool",
+    "MarkdownTableTool",
+    "MarkdownValidateTool",
+    "ReportComposeTool",
+    "ReportSummarizeTool",
+    "UrlListReadTool",
+    "WebFetchTool",
+    "WebSearchTool",
+    "build_default_registry",
+    "validate_public_url",
+]

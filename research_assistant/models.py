@@ -160,6 +160,7 @@ class TaskSpec:
     provider_name: Optional[str]
     urls: List[str] = field(default_factory=list)
     input_files: List[str] = field(default_factory=list)
+    options: Dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=utc_now)
     status: TaskStatus = TaskStatus.PLANNED
     summary: str = ""
@@ -172,6 +173,7 @@ class TaskSpec:
         provider_name: Optional[str],
         urls: List[str],
         input_files: List[str],
+        options: Optional[Dict[str, Any]] = None,
     ) -> "TaskSpec":
         return cls(
             id=uuid4().hex[:12],
@@ -180,6 +182,7 @@ class TaskSpec:
             provider_name=provider_name,
             urls=urls,
             input_files=input_files,
+            options=dict(options or {}),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -190,6 +193,7 @@ class TaskSpec:
             "provider_name": self.provider_name,
             "urls": self.urls,
             "input_files": self.input_files,
+            "options": self.options,
             "created_at": self.created_at,
             "status": self.status.value,
             "summary": self.summary,
@@ -204,6 +208,7 @@ class TaskSpec:
             provider_name=data.get("provider_name"),
             urls=[str(item) for item in data.get("urls") or []],
             input_files=[str(item) for item in data.get("input_files") or []],
+            options=dict(data.get("options") or {}),
             created_at=str(data.get("created_at", utc_now())),
             status=TaskStatus(str(data.get("status", TaskStatus.PLANNED.value))),
             summary=str(data.get("summary", "")),
@@ -216,6 +221,7 @@ class TaskPlan:
     summary: str
     steps: List[PlanStep]
     created_at: str = field(default_factory=utc_now)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -223,6 +229,7 @@ class TaskPlan:
             "summary": self.summary,
             "steps": [step.to_dict() for step in self.steps],
             "created_at": self.created_at,
+            "metadata": self.metadata,
         }
 
     @classmethod
@@ -232,4 +239,5 @@ class TaskPlan:
             summary=str(data.get("summary", "")),
             steps=[PlanStep.from_dict(dict(step)) for step in data.get("steps") or []],
             created_at=str(data.get("created_at", utc_now())),
+            metadata=dict(data.get("metadata") or {}),
         )

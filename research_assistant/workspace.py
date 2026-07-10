@@ -106,6 +106,12 @@ class TaskWorkspace:
     def read_artifact_text(self, artifact: Artifact) -> str:
         return self._safe_path(artifact.path).read_text(encoding="utf-8")
 
+    def read_artifact_bytes(self, artifact: Artifact) -> bytes:
+        return self._safe_path(artifact.path).read_bytes()
+
+    def artifact_path(self, artifact: Artifact) -> Path:
+        return self._safe_path(artifact.path)
+
     def read_artifact_json(self, artifact: Artifact) -> Any:
         return json.loads(self.read_artifact_text(artifact))
 
@@ -143,6 +149,27 @@ class TaskWorkspace:
         target = self._safe_path(Path("artifacts") / filename)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+        return self._register_artifact(
+            target,
+            kind=kind,
+            description=description,
+            source_url=source_url,
+            metadata=metadata,
+        )
+
+    def write_bytes_artifact(
+        self,
+        filename: str,
+        content: bytes,
+        *,
+        kind: str,
+        description: str,
+        source_url: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Artifact:
+        target = self._safe_path(Path("artifacts") / filename)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
         return self._register_artifact(
             target,
             kind=kind,

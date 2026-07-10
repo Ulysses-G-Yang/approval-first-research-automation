@@ -1,0 +1,25 @@
+version: 1
+name: crawler_report
+summary: "配置爬虫报告：$task.goal"
+requires:
+  - yaml_inputs
+steps:
+  - id: crawl
+    for_each: yaml_input_files
+    tool: browser.extract
+    description: "运行已明确提供的爬虫配置：$item"
+    arguments:
+      config_path: "$item"
+  - id: normalize
+    tool: data.normalize
+    description: "去重并整理已批准来源"
+    arguments: {}
+  - id: summarize
+    when: provider_configured
+    tool: report.summarize
+    description: "将已批准数据发送给已配置模型生成摘要"
+    arguments: {}
+  - id: report
+    tool: report.compose
+    description: "生成带来源清单的 Markdown 报告"
+    arguments: {}

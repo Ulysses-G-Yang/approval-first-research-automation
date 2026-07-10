@@ -16,8 +16,9 @@ class PlanningError(RuntimeError):
 
 PLANNER_SYSTEM_PROMPT = """You are the planning component of a local research assistant.
 Return exactly one JSON object. You can only propose calls from the supplied registered tool list.
-Never propose shell commands, arbitrary Python, browser JavaScript, login, publishing, private-network access,
-or plugins. Every source must either be one of the explicit public URLs or an `input:<index>` reference.
+Never propose shell commands, arbitrary Python, browser JavaScript, login, live uploading, publishing,
+private-network access, or plugins. `content.prepare_draft` is allowed only for an offline draft package.
+Every source must either be one of the explicit public URLs or an `input:<index>` reference.
 Do not invent URLs. Put source-reading steps before transformation/report steps. The final step should normally
 be report.compose. Use a concise Chinese description for each step.
 
@@ -45,6 +46,7 @@ class AgentPlanner:
             "goal": task.goal,
             "explicit_public_urls": task.urls,
             "explicit_input_files": inputs,
+            "workflow_options": task.options,
             "has_configured_provider": bool(task.provider_name),
             "registered_tools": self.registry.describe(),
             "constraints": {
@@ -89,16 +91,42 @@ class AgentPlanner:
 
     @staticmethod
     def _validate_sequence(steps) -> None:
-        source_tools = {"web.fetch", "web.search", "file.read", "url_list.read", "browser.extract"}
+        source_tools = {
+            "web.fetch",
+            "web.search",
+            "file.read",
+            "url_list.read",
+            "browser.extract",
+            "document.inspect",
+        }
         transformed = False
         has_source = False
         has_dataset = False
+        has_document_conversion = False
+        has_markdown_validation = False
         for index, step in enumerate(steps):
             name = step.call.tool_name
             if name in source_tools:
                 if transformed:
                     raise PlanningError("Model plan cannot add new sources after data transformation begins.")
                 has_source = True
+                continue
+            if name == "document.convert":
+                if not has_source:
+                    raise PlanningError("document.convert requires a preceding document.inspect step.")
+                transformed = True
+                has_document_conversion = True
+                continue
+            if name == "markdown.validate":
+                if not has_document_conversion:
+                    raise PlanningError("markdown.validate requires a preceding document.convert step.")
+                transformed = True
+                has_markdown_validation = True
+                continue
+            if name == "content.prepare_draft":
+                if not has_markdown_validation or index != len(steps) - 1:
+                    raise PlanningError("content.prepare_draft must be the final step after markdown.validate.")
+                transformed = True
                 continue
             if name == "data.normalize":
                 if not has_source or has_dataset:
@@ -115,3 +143,5 @@ class AgentPlanner:
                 if not has_dataset or index != len(steps) - 1:
                     raise PlanningError("report.compose must be the final step after data.normalize.")
                 transformed = True
+                continue
+            raise PlanningError(f"Model plan uses a tool without a supported V1 sequence: {name}")

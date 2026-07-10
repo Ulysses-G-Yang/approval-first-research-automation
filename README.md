@@ -57,13 +57,17 @@ python agent.py run "汇总本地销售数据" --workflow file_report --input da
 python agent.py run "将公开页面转成知识包" --workflow web_to_markdown --url https://example.com/article
 # 开发者：将一个无 actions 的 YAML 爬虫配置纳入同样的审批与审计流程
 python agent.py run "采集并整理站点列表" --workflow crawler_report --input configs/site.yaml
+# 将 DOCX、PDF、TXT 或 Markdown 转为带本地图片资产的 Markdown 包
+python agent.py run "整理现有技术文章" --workflow document_to_markdown --input article.docx
+# 准备某个平台的离线草稿包，不会登录、上传或发布
+python agent.py run "准备掘金草稿" --workflow content_save_draft --platform juejin --input article.docx
 ```
 
 将一份 TXT、Markdown、CSV 或 JSON URL 列表作为 `--input` 交给模型规划时，它可以选择受控的 `url_list.read` 工具先提取候选来源；读取列表本身不会自动访问每个链接。
 
 默认任务目录为 `~/GenericCrawler/tasks/<task-id>/`，其中保存 `task.json`、`plan.json`、`approvals.jsonl`、`run.jsonl`、原始来源、去重数据、`report.md` 与 `sources.jsonl`。使用 `python agent.py status <task-id>` 查看进度，使用 `python agent.py export <task-id>` 打包完整审计材料。
 
-详细的架构、Provider 格式、权限模型和开发者插件协议见 [AI 研究助手说明](docs/AI_RESEARCH_ASSISTANT.md)，非秘密配置模板见 [configs/agent_template.yaml](configs/agent_template.yaml)。
+工作流定义保存在 [workflows](workflows)，每个 YAML 只能引用已注册工具，不能嵌入 shell、Python 或页面脚本。详细的架构、Provider 格式、权限模型和开发者插件协议见 [AI 研究助手说明](docs/AI_RESEARCH_ASSISTANT.md)，工作流编写规则见 [工作流说明](docs/WORKFLOW_AUTHORING.md)，非秘密配置模板见 [configs/agent_template.yaml](configs/agent_template.yaml)。
 
 ## 三层提取机制
 
@@ -147,12 +151,14 @@ docs/          教育归档、技术文章与发布说明
 research_assistant/  任务编排、Provider、审批执行器与受控工具
 scripts/       现场验证与文章草稿工具
 tests/         离线夹具与单元测试
+workflows/     可版本管理的声明式研究、文档与草稿工作流
 ```
 
 ## 安全与贡献
 
 - 不提交 API Key、Cookie、浏览器 profile、私有页面数据或采集结果。
-- AI 研究助手第一版仅处理已明确提供的公开 HTTP(S) 页面，以及 Markdown、TXT、CSV、JSON 文件；不处理私有页面、PDF/Office、任意本地代码或自动正式发布。
+- AI 研究助手只处理已明确提供的公开 HTTP(S) 页面和本地文件。支持 DOCX、文本型 PDF、Markdown、TXT、CSV、JSON；扫描 PDF 目前只保留页面图像并提示 OCR 尚未执行。
+- `content_save_draft` 只生成离线草稿包；不读取登录态、不上传图片、不自动保存平台草稿，也不自动正式发布。
 - 贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，安全问题见 [SECURITY.md](SECURITY.md)。
 - 本项目仅用于合法、获得授权的数据采集与工程研究；使用者须自行遵守适用法律、网站政策与速率限制。
 

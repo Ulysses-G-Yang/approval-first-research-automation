@@ -60,3 +60,15 @@ class ResearchAssistantModelTests(unittest.TestCase):
             self.assertIn("secret_ref: provider:demo", text)
             self.assertNotIn("not-a-real-secret", text)
             self.assertEqual(load_settings(path).providers["demo"].model, "demo-model")
+
+    def test_task_options_round_trip_without_secret_material(self) -> None:
+        task = TaskSpec.create(
+            "prepare draft",
+            "content_save_draft",
+            None,
+            [],
+            [],
+            options={"platform": "juejin"},
+        )
+        restored = TaskSpec.from_dict(task.to_dict())
+        self.assertEqual(restored.options, {"platform": "juejin"})

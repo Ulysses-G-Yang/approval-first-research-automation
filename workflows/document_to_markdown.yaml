@@ -1,0 +1,22 @@
+version: 1
+name: document_to_markdown
+summary: "文档转 Markdown：$task.goal"
+requires:
+  - document_inputs
+steps:
+  - id: inspect_documents
+    for_each: document_input_files
+    tool: document.inspect
+    description: "检查已明确提供的文档：$item"
+    arguments:
+      path: "$item"
+  - id: convert_documents
+    for_each: document_input_files
+    tool: document.convert
+    description: "转换文档为 Markdown 与图片资产：$item"
+    arguments:
+      path: "$item"
+  - id: validate_markdown
+    tool: markdown.validate
+    description: "验证生成的 Markdown 与图片引用"
+    arguments: {}

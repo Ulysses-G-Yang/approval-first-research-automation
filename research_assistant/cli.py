@@ -17,7 +17,7 @@ from .runner import ApprovalError, TaskRunner, approve_step
 from .secrets import KeyringSecretStore, SecretStoreError
 from .settings import AgentSettings, ProviderConfig, SettingsError, default_config_path, load_settings, save_settings
 from .tools import build_default_registry
-from .workflows import WorkflowError, build_workflow_plan
+from .workflows import WorkflowError, available_workflows, build_workflow_plan
 from .workspace import TaskWorkspace, WorkspaceError, default_workspace_root
 
 
@@ -46,6 +46,10 @@ def _output_hint(tool_name: str) -> str:
         "file.read": "artifacts/file-*.json",
         "url_list.read": "artifacts/url-list-*.json",
         "browser.extract": "artifacts/crawl-*.json",
+        "document.inspect": "artifacts/documents/*/inspection.json",
+        "document.convert": "artifacts/documents/*/article.md and assets/",
+        "markdown.validate": "artifacts/documents/markdown-validation.json",
+        "content.prepare_draft": "artifacts/drafts/<platform>/",
         "data.normalize": "artifacts/normalized-dataset.json",
         "data.to_markdown": "artifacts/dataset-table.md",
         "report.summarize": "artifacts/model-summary.md",
@@ -132,6 +136,7 @@ async def _run_command(args: argparse.Namespace) -> int:
         provider_name=provider_name,
         urls=list(args.url),
         input_files=input_files,
+        options={"platform": args.platform} if args.platform else {},
     )
     workspace = TaskWorkspace.create(_workspace_root(args.workspace_root), task)
     try:
@@ -157,7 +162,10 @@ async def _run_command(args: argparse.Namespace) -> int:
     task.status = TaskStatus.WAITING_APPROVAL
     workspace.save_task(task)
     workspace.save_plan(plan)
-    workspace.append_log("plan_created", {"step_count": len(plan.steps), "summary": plan.summary})
+    workspace.append_log(
+        "plan_created",
+        {"step_count": len(plan.steps), "summary": plan.summary, "workflow_metadata": plan.metadata},
+    )
     print_plan(workspace)
     print(f"Next: agent approve {task.id} step-01")
     return 0
@@ -268,9 +276,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = subparsers.add_parser("run", help="Create an approval-gated task plan.")
     run.add_argument("goal")
-    run.add_argument("--workflow", default="auto", choices=["auto", "research_report", "file_report", "web_to_markdown", "crawler_report"])
+    run.add_argument("--workflow", default="auto", choices=["auto", *available_workflows()])
     run.add_argument("--url", action="append", default=[], help="Explicit public source URL; may be repeated.")
     run.add_argument("--input", action="append", default=[], help="Explicit local input file; may be repeated.")
+    run.add_argument("--platform", choices=["juejin", "zhihu", "csdn"], help="Target platform for content_save_draft only.")
     run.add_argument("--provider", help="Configured provider name; defaults to default_provider.")
     run.add_argument("--approve-planning", action="store_true", help="Acknowledge the model-planning request without an interactive prompt.")
     run.add_argument("--workspace-root", help="Override the default ~/GenericCrawler/tasks location.")

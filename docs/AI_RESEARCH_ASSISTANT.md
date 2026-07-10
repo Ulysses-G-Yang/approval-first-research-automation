@@ -2,7 +2,7 @@
 
 ## 目标与边界
 
-本项目的研究助手面向两类使用者：开发者可以继续编写 YAML、Python 工具和可复用工作流；非开发者可以描述研究目标，让已配置的大模型生成一份可读、可批准的执行计划。第一版只覆盖公开网页和常见数据文件到可追溯 Markdown 报告的流程。
+本项目的研究助手面向两类使用者：开发者可以继续编写 YAML、Python 工具和可复用工作流；非开发者可以描述研究目标，让已配置的大模型生成一份可读、可批准的执行计划。当前版本覆盖公开网页、常见数据文件和 DOCX/PDF/Markdown 文档到可追溯 Markdown 产物的流程。
 
 模型不拥有执行权限。它只能从注册表中选择工具，并说明为什么需要该步骤；任务执行器再根据用户的逐项批准调用工具。第一版没有任意 shell、任意 Python、页面 JavaScript、登录、私有网络、自动发布或 Office/PDF 解析能力。
 
@@ -78,6 +78,12 @@ python agent.py run "寻找公开研究资料" --workflow research_report
 
 # 开发者：复用现有 GenericSpider 配置，配置中不得包含 actions
 python agent.py run "采集站点列表" --workflow crawler_report --input configs/site.yaml
+
+# 将 DOCX、PDF、Markdown 或 TXT 转为 Markdown 与图片资产
+python agent.py run "整理文章资料" --workflow document_to_markdown --input article.docx
+
+# 仅准备本地平台草稿包；不会登录、上传或发布
+python agent.py run "准备草稿" --workflow content_save_draft --platform juejin --input article.docx
 ```
 
 受控工具包括：
@@ -86,6 +92,9 @@ python agent.py run "采集站点列表" --workflow crawler_report --input confi
 - `url_list.read`：从明确传入的 TXT、Markdown、CSV 或 JSON 中提取公开 URL 候选项；读取列表不会自动访问其中每个页面。
 - `file.read`：只读取命令行中明确以 `--input` 指定的 Markdown、TXT、CSV、JSON 文件。
 - `browser.extract`：在审批边界内复用现有 `GenericSpider`，但第一版禁止 YAML `actions` 和明文 LLM Key。计划会读取该显式配置的 URL 列表以展示网络目标；若配置开启 selector LLM 修复，该步骤会提升为敏感步骤并显示对应 Provider。
+- `document.inspect` 与 `document.convert`：读取明确传入的 DOCX、PDF、Markdown、TXT，并在任务工作区生成 Markdown、转换清单和本地图片资产。文本型 PDF 会提取文字与内嵌图片；扫描页面会保留渲染图并标记 OCR 未执行。
+- `markdown.validate`：检查转换后 Markdown 的本地图片引用是否仍可复核。
+- `content.prepare_draft`：生成掘金、知乎或 CSDN 的离线草稿包；不打开浏览器、不读取 Cookie、不上传图片、不保存草稿、不发布。
 - `data.normalize`、`data.to_markdown`、`report.compose`：仅向当前任务独立工作区写入可复核产物。
 
 网页读取、文件读取、浏览器采集和所有产物写入都是单独步骤。若任务配置了模型，`report.summarize` 会作为单独的敏感步骤，明确将已批准的去重数据样本和来源元数据发送给该 Provider；`report.compose` 则始终离线地合成最终报告。模型不可据此提出新的工具调用，模型摘要失败时仍会生成确定性的本地报告。
@@ -102,13 +111,16 @@ run.jsonl          执行日志
 artifacts/         原始网页/文件、清洗数据、Markdown 表格和报告
 artifacts/report.md
 artifacts/sources.jsonl
+artifacts/documents/<bundle>/article.md
+artifacts/documents/<bundle>/assets/
+artifacts/drafts/<platform>/draft-manifest.json
 ```
 
 报告保留来源 URL、抓取/读取时间、产物路径和原始结构化数据；无法访问的页面会在对应步骤中失败并留下错误状态，不会被伪装为成功。`agent export` 将整个任务目录压缩，以便共享或归档。
 
 ## 开发者扩展
 
-开发者可以在本地创建经审阅的 Python 模块，并在 `agent.yaml` 的 `plugins` 中显式列出模块名。每个模块必须提供：
+开发者可以在根目录 [workflows](../workflows) 新增版本化 YAML 工作流，也可以在本地创建经审阅的 Python 模块，并在 `agent.yaml` 的 `plugins` 中显式列出模块名。工作流 YAML 只负责编排已注册工具；它不能嵌入 shell、Python、JavaScript 或登录自动化。具体格式见 [工作流说明](WORKFLOW_AUTHORING.md)。
 
 ```python
 def register_tools(registry):
@@ -119,9 +131,9 @@ def register_tools(registry):
 
 ## 当前限制
 
-- 仅支持公开、获得授权的 HTTP(S) 网页和 Markdown/TXT/CSV/JSON。
+- 仅支持公开、获得授权的 HTTP(S) 网页，以及 DOCX、文本型 PDF、Markdown、TXT、CSV、JSON。
 - 不自动登录、不读取浏览器 profile、不采集私有或受访问控制页面。
-- 不自动发布内容；现有文章脚本仍需要单独、人工确认的草稿或发布流程。
+- 不自动发布内容。当前草稿工作流只准备本地包；现有文章脚本仍需要单独、人工确认的草稿或发布流程，平台图片上传适配器将在后续独立实现。
 - 不把模型输出当作事实。报告中的模型整理内容必须结合 `sources.jsonl` 和原始产物复核。
 
 这些限制是第一版的权限模型组成部分，而不是待绕过的障碍。后续 PDF/Office、草稿保存和更丰富的数据工具会在同样的批准与审计机制下逐步加入。

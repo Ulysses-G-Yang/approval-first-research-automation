@@ -16,10 +16,15 @@ dependencies = [
   "dashscope>=1.24,<2",
   "httpx>=0.28,<1",
   "keyring>=25,<26",
+  "python-docx>=1.1,<2",
+  "PyMuPDF>=1.24,<2",
 ]
 
 [project.scripts]
 agent = "research_assistant.cli:main"
 
-[tool.setuptools]
-packages = ["research_assistant"]
+[tool.setuptools.packages.find]
+include = ["research_assistant*", "workflows"]
+
+[tool.setuptools.package-data]
+workflows = ["*.yaml"]
