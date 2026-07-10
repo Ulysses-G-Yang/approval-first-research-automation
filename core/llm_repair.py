@@ -23,7 +23,8 @@ class LLMRepair:
         self.config = config or {}
         self.enable_repair = bool(self.config.get("enable_repair", False))
         self.provider = str(self.config.get("provider", "gemini")).strip().lower() or "gemini"
-        self.api_key = str(self.config.get("api_key", "") or "").strip()
+        self.secret_ref = str(self.config.get("secret_ref", "") or "").strip()
+        self.api_key = self._load_api_key() if self.enable_repair else ""
         self.model = str(self.config.get("model", "") or "").strip()
         self.endpoint = str(self.config.get("endpoint", "") or "").strip()
         self.timeout = float(self.config.get("timeout", 10) or 10)
@@ -43,7 +44,7 @@ class LLMRepair:
 
                     http_options: Dict[str, Any] = {"timeout": int(self.timeout * 1000)}
                     if self.endpoint:
-                        http_options["baseUrl"] = self.endpoint
+                        http_options["base_url"] = self.endpoint
                     self._gemini_client = genai.Client(
                         api_key=self.api_key,
                         http_options=types.HttpOptions(**http_options),
@@ -59,6 +60,28 @@ class LLMRepair:
                     logger.debug("LLMRepair initialized with provider=qwen.")
                 except Exception as exc:
                     logger.warning("dashscope 初始化失败，Qwen 将不可用：%s", exc)
+
+    def _load_api_key(self) -> str:
+        """Resolve the preferred credential-store reference without persisting a key in YAML.
+
+        `api_key` remains a temporary compatibility path for code that constructs
+        LLMRepair directly. New YAML configs should use `secret_ref`; the agent
+        refuses inline keys altogether before it reaches this class.
+        """
+        if self.secret_ref:
+            try:
+                from research_assistant.secrets import KeyringSecretStore
+
+                return KeyringSecretStore().get(self.secret_ref)
+            except Exception as exc:
+                logger.warning("无法从系统凭据库读取 secret_ref=%s：%s", self.secret_ref, exc)
+                return ""
+
+        inline_key = str(self.config.get("api_key", "") or "").strip()
+        if inline_key and inline_key not in {"YOUR_API_KEY", "<YOUR_API_KEY>"}:
+            logger.warning("llm.api_key 已弃用；请改用系统凭据库中的 llm.secret_ref。")
+            return inline_key
+        return ""
 
     def cache_key(self, page_url: str, field_name: str) -> str:
         return f"{page_url}::{field_name}"
@@ -215,14 +238,17 @@ class LLMRepair:
                 "content": prompt,
             },
         ]
-        response = self._dashscope.MultiModalConversation.call(
-            api_key=self.api_key,
-            model=self.model,
-            messages=messages,
-            result_format="message",
-            max_tokens=256,
-            temperature=0.0,
-        )
+        kwargs: Dict[str, Any] = {
+            "api_key": self.api_key,
+            "model": self.model,
+            "messages": messages,
+            "result_format": "message",
+            "max_tokens": 256,
+            "temperature": 0.0,
+        }
+        if self.endpoint:
+            kwargs["base_address"] = self.endpoint
+        response = self._dashscope.MultiModalConversation.call(**kwargs)
         # 兼容返回结构
         outputs = getattr(response, "output", None)
         if outputs is not None:

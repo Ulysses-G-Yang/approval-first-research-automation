@@ -4,6 +4,9 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+*.egg-info/
+build/
+dist/
 
 # Local environments and secrets
 .venv/

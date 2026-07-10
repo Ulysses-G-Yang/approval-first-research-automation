@@ -1,6 +1,6 @@
-# 自我修复的通用网页数据采集框架
+# 通用网页采集与 AI 研究助手
 
-> 一个自带自适应 + LLM 智能修复能力的通用网页数据采集框架。
+> 一个自带自适应解析、LLM selector 修复与审批式研究工作流的本地工具。
 
 [![CI](https://github.com/3023345758/Taobao-Anti-Scraping-Project/actions/workflows/ci.yml/badge.svg)](https://github.com/3023345758/Taobao-Anti-Scraping-Project/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
@@ -24,6 +24,46 @@ conda env create -f environment.yml && conda activate generic-crawler-py312 && p
 pip install -r requirements.txt
 playwright install chromium
 ```
+
+## AI 自动化研究助手（预览）
+
+`agent` 将“研究一个主题、读取公开网页或本地数据文件、整理成可复核 Markdown 报告”变成一个本地、逐步批准的工作流。模型只负责生成和解释计划，实际执行只能使用已注册的工具；它不能直接运行 shell、任意 Python、页面 JavaScript、登录或发布操作。
+
+首次配置时，API Key 会以隐藏输入方式写入 Windows Credential Manager，设置文件只保存 `secret_ref`：
+
+```bash
+python agent.py configure provider --name default --kind openai_compatible --model your-model --base-url https://your-endpoint/v1
+```
+
+Gemini 与 Qwen 也可以原生配置：
+
+```bash
+python agent.py configure provider --name gemini --kind gemini --model gemini-2.5-flash --make-default
+python agent.py configure provider --name qwen --kind qwen --model qwen-plus
+```
+
+使用显式来源创建研究任务。每个步骤都会展示工具、输入、网络目标、风险等级和产物位置，随后必须分别 `approve` 和 `resume`：
+
+```bash
+python agent.py run "整理这些来源并生成市场报告" --url https://example.com/a --url https://example.com/b
+python agent.py approve <task-id> step-01
+python agent.py resume <task-id>
+```
+
+不想让模型参与规划时，可使用内置工作流；它们仍然逐项审批：
+
+```bash
+python agent.py run "汇总本地销售数据" --workflow file_report --input data.csv
+python agent.py run "将公开页面转成知识包" --workflow web_to_markdown --url https://example.com/article
+# 开发者：将一个无 actions 的 YAML 爬虫配置纳入同样的审批与审计流程
+python agent.py run "采集并整理站点列表" --workflow crawler_report --input configs/site.yaml
+```
+
+将一份 TXT、Markdown、CSV 或 JSON URL 列表作为 `--input` 交给模型规划时，它可以选择受控的 `url_list.read` 工具先提取候选来源；读取列表本身不会自动访问每个链接。
+
+默认任务目录为 `~/GenericCrawler/tasks/<task-id>/`，其中保存 `task.json`、`plan.json`、`approvals.jsonl`、`run.jsonl`、原始来源、去重数据、`report.md` 与 `sources.jsonl`。使用 `python agent.py status <task-id>` 查看进度，使用 `python agent.py export <task-id>` 打包完整审计材料。
+
+详细的架构、Provider 格式、权限模型和开发者插件协议见 [AI 研究助手说明](docs/AI_RESEARCH_ASSISTANT.md)，非秘密配置模板见 [configs/agent_template.yaml](configs/agent_template.yaml)。
 
 ## 三层提取机制
 
@@ -57,12 +97,12 @@ fields:
 llm:
   enable_repair: false
   provider: gemini
-  api_key: "YOUR_API_KEY"
+  secret_ref: "provider:gemini"
   model: gemini-2.5-flash
   timeout: 10
 ```
 
-完整字段、分页、浏览器与动作示例见 [configs/spider_template.yaml](configs/spider_template.yaml)。包含真实 API Key 的配置请保存为 `*.local.yaml`，不要提交。
+完整字段、分页、浏览器与动作示例见 [configs/spider_template.yaml](configs/spider_template.yaml)。请通过 `agent configure provider` 将 API Key 写入系统凭据库；YAML 只保存 `secret_ref`，不要提交真实 Key。
 
 ## 验证与测试
 
@@ -100,9 +140,11 @@ python scripts/publish_articles.py --platform juejin --mode draft
 ## 项目结构
 
 ```text
+agent.py       AI 研究助手 CLI 入口
 configs/       站点与模板配置
 core/          通用爬虫引擎与 LLM 修复模块
 docs/          教育归档、技术文章与发布说明
+research_assistant/  任务编排、Provider、审批执行器与受控工具
 scripts/       现场验证与文章草稿工具
 tests/         离线夹具与单元测试
 ```
@@ -110,6 +152,7 @@ tests/         离线夹具与单元测试
 ## 安全与贡献
 
 - 不提交 API Key、Cookie、浏览器 profile、私有页面数据或采集结果。
+- AI 研究助手第一版仅处理已明确提供的公开 HTTP(S) 页面，以及 Markdown、TXT、CSV、JSON 文件；不处理私有页面、PDF/Office、任意本地代码或自动正式发布。
 - 贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，安全问题见 [SECURITY.md](SECURITY.md)。
 - 本项目仅用于合法、获得授权的数据采集与工程研究；使用者须自行遵守适用法律、网站政策与速率限制。
 

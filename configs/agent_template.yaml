@@ -1,0 +1,28 @@
+# This file has no API key. Copy it to ~/GenericCrawler/agent.yaml or pass --config.
+# API keys are stored separately in the system credential store by:
+#   python agent.py configure provider --kind openai_compatible --model <model> --base-url <url>
+version: 1
+default_provider: example-openai-compatible
+
+providers:
+  example-openai-compatible:
+    kind: openai_compatible
+    model: your-model-name
+    base_url: https://your-openai-compatible-endpoint/v1
+    secret_ref: provider:example-openai-compatible
+    timeout_seconds: 30
+
+  example-gemini:
+    kind: gemini
+    model: gemini-2.5-flash
+    secret_ref: provider:example-gemini
+    timeout_seconds: 30
+
+  example-qwen:
+    kind: qwen
+    model: qwen-plus
+    secret_ref: provider:example-qwen
+    timeout_seconds: 30
+
+# Developer-installed tool modules only. The model cannot install or modify this list.
+plugins: []

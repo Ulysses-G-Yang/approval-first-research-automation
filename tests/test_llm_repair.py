@@ -16,14 +16,15 @@ class FakePage:
 
 class LLMRepairTests(unittest.IsolatedAsyncioTestCase):
     def make_repair(self, provider: str = "gemini", timeout: float = 0.1) -> LLMRepair:
-        repair = LLMRepair(
-            {
-                "enable_repair": True,
-                "provider": provider,
-                "api_key": "test-key",
-                "timeout": timeout,
-            }
-        )
+        with patch.object(LLMRepair, "_load_api_key", return_value="test-key"):
+            repair = LLMRepair(
+                {
+                    "enable_repair": True,
+                    "provider": provider,
+                    "secret_ref": "test-only",
+                    "timeout": timeout,
+                }
+            )
         if provider == "gemini":
             repair._gemini_client = object()
         else:
