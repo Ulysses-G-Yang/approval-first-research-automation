@@ -4,7 +4,7 @@
 
 本项目的研究助手面向两类使用者：开发者可以继续编写 YAML、Python 工具和可复用工作流；非开发者可以描述研究目标，让已配置的大模型生成一份可读、可批准的执行计划。当前版本覆盖公开网页、常见数据文件和 DOCX/PDF/Markdown 文档到可追溯 Markdown 产物的流程。
 
-模型不拥有执行权限。它只能从注册表中选择工具，并说明为什么需要该步骤；任务执行器再根据用户的逐项批准调用工具。第一版没有任意 shell、任意 Python、页面 JavaScript、登录、私有网络、自动发布或 Office/PDF 解析能力。
+模型不拥有执行权限。它只能从注册表中选择工具，并说明为什么需要该步骤；任务执行器再根据用户的逐项批准调用工具。第一版没有任意 shell、任意 Python、页面 JavaScript、登录、私有网络或自动发布能力。DOCX、文本型 PDF、Markdown 和 TXT 的转换由受控工具完成，不会因此扩大模型权限。
 
 ## 安装与模型配置
 
@@ -19,7 +19,11 @@ pip install -r requirements.txt
 ```bash
 pip install -e .
 agent --help
+agent doctor
+agent list-workflows
 ```
+
+`agent doctor` 只检查本地 Python、依赖、Playwright Chromium、非秘密配置和凭据引用，不会打印 API Key。`agent list-workflows` 会在创建任务前展示内置工作流的前置条件和可能调用的受控工具。
 
 配置命令会以隐藏输入读取 API Key，并使用 `keyring` 写入 Windows Credential Manager。默认非秘密配置位于 `~/GenericCrawler/agent.yaml`，其格式参考 [agent_template.yaml](../configs/agent_template.yaml)。文件中只能出现 `secret_ref`，不会写入 API Key。
 
@@ -61,6 +65,17 @@ python agent.py export <task-id>
 ```
 
 `resume` 一次只执行一个已批准步骤。未批准步骤绝不会因 `resume`、失败重试或模型回复而自动执行。
+
+首次体验不需要模型 API Key 或联网网页。使用仓库中的本地样例即可：
+
+```bash
+agent run "汇总示例市场笔记" \
+  --workflow file_report \
+  --input examples/research-report/market-notes.csv \
+  --workspace-root .demo-tasks
+```
+
+样例与预期产物说明见 [工作流画廊](WORKFLOW_GALLERY.md)。
 
 ## 内置工作流
 
@@ -136,4 +151,4 @@ def register_tools(registry):
 - 不自动发布内容。当前草稿工作流只准备本地包；现有文章脚本仍需要单独、人工确认的草稿或发布流程，平台图片上传适配器将在后续独立实现。
 - 不把模型输出当作事实。报告中的模型整理内容必须结合 `sources.jsonl` 和原始产物复核。
 
-这些限制是第一版的权限模型组成部分，而不是待绕过的障碍。后续 PDF/Office、草稿保存和更丰富的数据工具会在同样的批准与审计机制下逐步加入。
+这些限制是第一版的权限模型组成部分，而不是待绕过的障碍。后续 OCR、受审阅的草稿保存适配器和更丰富的数据工具会在同样的批准与审计机制下逐步加入。

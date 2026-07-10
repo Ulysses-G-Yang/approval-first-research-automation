@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "generic-crawler-research-assistant"
-version = "0.3.0"
-description = "Approval-gated local research assistant built on the generic crawler."
+version = "2.1.0"
+description = "Approval-first research automation for public web pages and local files."
 requires-python = ">=3.12"
 dependencies = [
   "playwright>=1.61,<2",

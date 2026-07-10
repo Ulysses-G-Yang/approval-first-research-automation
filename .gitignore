@@ -18,6 +18,7 @@ venv/
 
 # Crawler output and local verification artifacts
 output/
+.demo-tasks/
 output_*.json
 output_*.jsonl
 output_*.csv
@@ -34,3 +35,4 @@ scripts/browser_state/
 *.log
 .vscode/
 .idea/
+docs/assets/.frames/

@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import getpass
+import importlib
 import json
+import platform
 import sys
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 from .models import TaskSpec
 from .planner import AgentPlanner, PlanningError
@@ -17,7 +19,7 @@ from .runner import ApprovalError, TaskRunner, approve_step
 from .secrets import KeyringSecretStore, SecretStoreError
 from .settings import AgentSettings, ProviderConfig, SettingsError, default_config_path, load_settings, save_settings
 from .tools import build_default_registry
-from .workflows import WorkflowError, available_workflows, build_workflow_plan
+from .workflows import WorkflowError, available_workflows, build_workflow_plan, workflow_catalog
 from .workspace import TaskWorkspace, WorkspaceError, default_workspace_root
 
 
@@ -33,6 +35,87 @@ def _load_registry(settings: AgentSettings):
     registry = build_default_registry()
     load_plugins(registry, settings.plugins)
     return registry
+
+
+def _module_available(module_name: str) -> tuple[bool, str]:
+    try:
+        importlib.import_module(module_name)
+    except Exception as exc:
+        return False, str(exc)
+    return True, "available"
+
+
+def _chromium_status() -> tuple[bool, str]:
+    """Inspect Playwright's local browser path without opening a browser or a network connection."""
+    try:
+        from playwright.sync_api import sync_playwright
+
+        playwright = sync_playwright().start()
+        try:
+            executable = Path(playwright.chromium.executable_path)
+        finally:
+            playwright.stop()
+    except Exception as exc:
+        return False, f"Playwright probe failed: {exc}"
+    if executable.is_file():
+        return True, str(executable)
+    return False, f"Chromium is not installed at {executable}. Run: playwright install chromium"
+
+
+def collect_doctor_report(
+    config_path: Path,
+    *,
+    module_probe: Callable[[str], tuple[bool, str]] = _module_available,
+    chromium_probe: Callable[[], tuple[bool, str]] = _chromium_status,
+    secret_store: Optional[KeyringSecretStore] = None,
+) -> tuple[list[tuple[str, bool, str]], bool]:
+    """Build a local-only health report without exposing secret values."""
+    checks: list[tuple[str, bool, str]] = []
+    python_ok = sys.version_info >= (3, 12)
+    checks.append(("Python 3.12+", python_ok, platform.python_version()))
+
+    for label, module_name, required in (
+        ("Playwright", "playwright", True),
+        ("PyYAML", "yaml", True),
+        ("Scrapling", "scrapling", True),
+        ("keyring", "keyring", True),
+        ("python-docx", "docx", True),
+        ("PyMuPDF", "fitz", True),
+        ("playwright-stealth", "playwright_stealth", False),
+        ("Gemini SDK", "google.genai", False),
+        ("Qwen SDK", "dashscope", False),
+    ):
+        available, detail = module_probe(module_name)
+        status = available or not required
+        prefix = "optional; " if not required and not available else ""
+        checks.append((label, status, prefix + detail))
+
+    chromium_ok, chromium_detail = chromium_probe()
+    checks.append(("Playwright Chromium", chromium_ok, chromium_detail))
+
+    try:
+        settings = load_settings(config_path)
+    except SettingsError as exc:
+        checks.append(("Agent settings", False, str(exc)))
+        return checks, False
+
+    if config_path.exists():
+        checks.append(("Agent settings", True, str(config_path)))
+    else:
+        checks.append(("Agent settings", True, f"not created yet; expected path: {config_path}"))
+
+    store = secret_store or KeyringSecretStore()
+    for name, provider in sorted(settings.providers.items()):
+        try:
+            store.get(provider.secret_ref)
+        except SecretStoreError as exc:
+            checks.append((f"Provider '{name}' credential", False, str(exc)))
+        else:
+            checks.append((f"Provider '{name}' credential", True, "credential reference is available"))
+
+    optional_labels = {"Gemini SDK", "Qwen SDK", "playwright-stealth"}
+    required_ok = all(ok for label, ok, _detail in checks if label not in optional_labels)
+    return checks, required_ok
 
 
 def _format_arguments(arguments: dict) -> str:
@@ -253,10 +336,36 @@ def _command_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _command_list_workflows(args: argparse.Namespace) -> int:
+    catalog = workflow_catalog()
+    if not catalog:
+        print("No bundled workflows were found.")
+        return 1
+    for entry in catalog:
+        print(entry["name"])
+        print(f"  Summary: {entry['summary']}")
+        print(f"  Requires: {', '.join(entry['requires']) or 'none'}")
+        print(f"  Tools: {', '.join(entry['tools'])}")
+    return 0
+
+
+def _command_doctor(args: argparse.Namespace) -> int:
+    checks, healthy = collect_doctor_report(_config_path(args.config))
+    print("Agent doctor (local checks only)")
+    for label, ok, detail in checks:
+        marker = "OK" if ok else "WARN"
+        print(f"[{marker}] {label}: {detail}")
+    if not healthy:
+        print("Fix required warnings before running browser or document workflows.")
+        return 1
+    print("Local runtime checks passed.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent",
-        description="Local, approval-gated research assistant for public sources and common data files.",
+        description="Approval-gated research automation for public sources and local files.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -273,6 +382,13 @@ def build_parser() -> argparse.ArgumentParser:
     provider.add_argument("--make-default", action="store_true")
     provider.add_argument("--config", help="Optional path for the non-secret YAML settings file.")
     provider.set_defaults(handler=_command_configure_provider)
+
+    doctor = subparsers.add_parser("doctor", help="Check local runtime, browser, and credential references without exposing secrets.")
+    doctor.add_argument("--config", help="Optional path for non-secret agent settings.")
+    doctor.set_defaults(handler=_command_doctor)
+
+    list_workflows = subparsers.add_parser("list-workflows", help="List bundled workflows, requirements, and registered tool calls.")
+    list_workflows.set_defaults(handler=_command_list_workflows)
 
     run = subparsers.add_parser("run", help="Create an approval-gated task plan.")
     run.add_argument("goal")

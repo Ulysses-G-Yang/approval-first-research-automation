@@ -29,6 +29,28 @@ def available_workflows(directory: Optional[Path] = None) -> List[str]:
     return sorted(path.stem for path in root.glob("*.yaml") if WORKFLOW_NAME_PATTERN.fullmatch(path.stem))
 
 
+def workflow_catalog(directory: Optional[Path] = None) -> List[Dict[str, Any]]:
+    """Return safe, human-readable metadata for bundled declarative workflows."""
+    catalog: List[Dict[str, Any]] = []
+    for name in available_workflows(directory):
+        _, definition = load_workflow_definition(name, directory)
+        steps = definition.get("steps") or []
+        tools = [
+            str(step.get("tool", "")).strip()
+            for step in steps
+            if isinstance(step, dict) and str(step.get("tool", "")).strip()
+        ]
+        catalog.append(
+            {
+                "name": name,
+                "summary": str(definition.get("summary", "")).strip(),
+                "requires": [str(value) for value in definition.get("requires") or []],
+                "tools": tools,
+            }
+        )
+    return catalog
+
+
 def _definition_path(name: str, directory: Optional[Path] = None) -> Path:
     if not WORKFLOW_NAME_PATTERN.fullmatch(name):
         raise WorkflowError("Workflow names may only contain lowercase letters, digits, hyphens, and underscores.")
