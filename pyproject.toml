@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "generic-crawler-research-assistant"
+version = "2.1.0"
+description = "Approval-first research automation for public web pages and local files."
+requires-python = ">=3.12"
+dependencies = [
+  "playwright>=1.61,<2",
+  "PyYAML>=6,<7",
+  "scrapling>=0.4.10,<0.5",
+  "playwright-stealth>=2.0,<3",
+  "google-genai>=1,<2",
+  "dashscope>=1.24,<2",
+  "httpx>=0.28,<1",
+  "keyring>=25,<26",
+  "python-docx>=1.1,<2",
+  "PyMuPDF>=1.24,<2",
+]
+
+[project.scripts]
+agent = "research_assistant.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["research_assistant*", "workflows"]
+
+[tool.setuptools.package-data]
+workflows = ["*.yaml"]

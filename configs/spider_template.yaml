@@ -17,7 +17,9 @@ browser:
 llm:
   enable_repair: false
   provider: "gemini"
-  api_key: "YOUR_API_KEY"
+  # Run `python agent.py configure provider ...` once, then reference the
+  # credential-store entry here. Never put a real API key in this file.
+  secret_ref: "provider:gemini"
   model: "gemini-2.5-flash"
   endpoint: ""
   timeout: 10

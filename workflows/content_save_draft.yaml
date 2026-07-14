@@ -1,0 +1,28 @@
+version: 1
+name: content_save_draft
+summary: "准备平台草稿包：$task.goal"
+requires:
+  - document_inputs
+  - platform
+steps:
+  - id: inspect_documents
+    for_each: document_input_files
+    tool: document.inspect
+    description: "检查待发布文档：$item"
+    arguments:
+      path: "$item"
+  - id: convert_documents
+    for_each: document_input_files
+    tool: document.convert
+    description: "转换待发布文档为 Markdown 与图片资产：$item"
+    arguments:
+      path: "$item"
+  - id: validate_markdown
+    tool: markdown.validate
+    description: "验证 Markdown 与图片引用"
+    arguments: {}
+  - id: prepare_draft
+    tool: content.prepare_draft
+    description: "准备 $task.options.platform 平台草稿包，不会登录或发布"
+    arguments:
+      platform: "$task.options.platform"

@@ -1,117 +1,142 @@
-# 自我修复的通用网页数据采集框架
+# Traceable AI Research Automation
 
-> 一个自带自适应 + LLM 智能修复能力的通用网页数据采集框架。
+[简体中文](README.zh-CN.md)
+
+> Turn public web pages and local files into cited Markdown, datasets, and review-ready draft packages.
+>
+> The model proposes the plan. You approve every action.
 
 [![CI](https://github.com/3023345758/Taobao-Anti-Scraping-Project/actions/workflows/ci.yml/badge.svg)](https://github.com/3023345758/Taobao-Anti-Scraping-Project/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-2EA44F)](LICENSE)
 
-## 功能演示
+![Traceable research workflow preview](docs/assets/product-preview.png)
 
-`GIF 占位：docs/assets/demo.gif`
+[View the local workflow overview animation](docs/assets/workflow-overview.gif)
 
-框架将站点差异收敛到 YAML 配置，并在字段提取失败时依次尝试常规 CSS selector、Scrapling 自适应解析和可选 LLM selector 修复。每一步都有日志与降级，不把“没有数据”伪装成成功。
+## Collect, Verify, Compose
 
-## 快速开始
+This project is a local, approval-first research and content automation tool. It combines a configurable browser extraction engine with a restricted task runner:
 
-```bash
-conda env create -f environment.yml && conda activate generic-crawler-py312 && playwright install chromium && python extract_prices.py --config configs/douban.yaml --output output/douban.jsonl
-```
+| Stage | What happens | What you keep |
+| --- | --- | --- |
+| **Collect** | Read explicitly supplied public URLs and local files. | Original inputs and normalized records. |
+| **Verify** | Inspect a plan, approve each tool call, and review its target and risk. | `plan.json`, approvals, logs, and source manifests. |
+| **Compose** | Produce Markdown reports, datasets, document bundles, or offline draft packages. | Reviewable artifacts that stay inside one task workspace. |
 
-本项目以 Python 3.12 作为验证运行时。也可以手动创建环境后安装依赖：
+The assistant never receives permission to run arbitrary shell commands, Python, browser JavaScript, log in to websites, or publish content by itself.
 
-```bash
-pip install -r requirements.txt
-playwright install chromium
-```
+## What You Can Do Today
 
-## 三层提取机制
+- **Research public sources**: collect explicitly provided pages, deduplicate them, and write a source-backed Markdown report.
+- **Turn files into Markdown**: convert DOCX, text PDFs, Markdown, TXT, CSV, and JSON into task-local artifacts. Document images are preserved as local assets; scanned PDFs are retained as rendered images and reported as needing OCR.
+- **Prepare content packages**: create an offline Juejin, Zhihu, or CSDN Markdown draft package. Nothing is uploaded, saved to a platform, or published.
+- **Use a model without giving it control**: configure OpenAI-compatible endpoints, Gemini, or Qwen through a hidden API-key prompt and the system credential store. The model produces a plan or an optional summary; registered tools do the work after approval.
+- **Build developer workflows**: use versioned YAML workflows, a guarded plugin contract, and the existing `GenericSpider` engine.
 
-1. **配置 selector**：字段由 YAML 中的 CSS selector、属性和作用域定义，是默认且最快的路径。
-2. **Scrapling 自适应解析**：常规 selector 返回空时，使用相同字段标识在页面 HTML 中尝试自适应定位。
-3. **LLM selector 修复**：前两层均失败时，只有显式开启后才调用 Gemini 或 Qwen，返回候选 selector 并仅在当前页面重试一次。
+See the [workflow gallery](docs/WORKFLOW_GALLERY.md), [product scope](docs/PRODUCT_SCOPE.md), and [AI assistant architecture](docs/AI_RESEARCH_ASSISTANT.md).
 
-LLM 修复默认关闭，候选 selector 会按“页面 URL + 字段名”缓存。API 调用超时、依赖缺失或模型返回无效内容时，任务记录日志并继续，不会中断整次采集。
+## Quick Start
 
-## 配置驱动
-
-新站点通常只需要新增一个 YAML 文件：
-
-```yaml
-name: example-listing
-start_url: "https://example.com/list"
-enable_adaptive: true
-
-pagination:
-  enabled: true
-  next_selector: ".next a"
-  max_pages: 2
-
-item_selector: ".card"
-fields:
-  - name: title
-    selector: ".title"
-  - name: price
-    selector: ".price"
-
-llm:
-  enable_repair: false
-  provider: gemini
-  api_key: "YOUR_API_KEY"
-  model: gemini-2.5-flash
-  timeout: 10
-```
-
-完整字段、分页、浏览器与动作示例见 [configs/spider_template.yaml](configs/spider_template.yaml)。包含真实 API Key 的配置请保存为 `*.local.yaml`，不要提交。
-
-## 验证与测试
-
-豆瓣 Top250 配置用于手动验证：
+Python 3.12 is the verified runtime. The first commands are local and do not require an API key:
 
 ```bash
-python extract_prices.py --config configs/douban.yaml --output output/douban.jsonl
-python scripts/verify.py --artifacts-dir output/verification
+conda env create -f environment.yml
+conda activate generic-crawler-py312
+pip install -e .
+agent doctor
+agent list-workflows
 ```
 
-第二条命令会先运行正常 selector，再自动注入错误 selector。它只有在 `title` 和 `rating` 非空、且日志出现 `ADAPTIVE_SUCCESS` 事件时才会通过。该命令会访问豆瓣，请仅在符合网站条款和当地法律的前提下运行。
-
-离线测试不访问任何第三方站点：
+Run the included offline CSV example. The task ID is printed by the first command; inspect the plan before approving the next step.
 
 ```bash
-python -m unittest discover -s tests -v
+agent run "Summarize the example market notes" \
+  --workflow file_report \
+  --input examples/research-report/market-notes.csv \
+  --workspace-root .demo-tasks
+
+agent approve <task-id> step-01
+agent resume <task-id>
+agent status <task-id>
 ```
 
-## 典型教育案例：淘宝配置
+Each `resume` runs at most one approved step. A completed task contains its report, source manifest, task plan, approval history, and execution log.
 
-[configs/taobao.yaml](configs/taobao.yaml) 是将早期单站点逻辑迁移到配置驱动结构的教学案例。它不代表对任何平台的兼容性承诺，也不应用于绕过访问控制、采集非公开数据或违反服务条款。
+## A Clear Contract for Models
 
-早期版本保存在 [v1.0-educational](https://github.com/3023345758/Taobao-Anti-Scraping-Project/tree/v1.0-educational)，背景与边界见 [教育归档说明](docs/EDUCATIONAL_VERSION.md)。
-
-## 文章草稿工具
-
-`scripts/publish_articles.py` 一次只处理一个平台，默认仅保存草稿：
+Non-developers can configure a provider once and describe a goal in natural language. Developers can use deterministic YAML workflows without a model.
 
 ```bash
-python scripts/publish_articles.py --platform juejin --mode draft
+# Any OpenAI Chat Completions-compatible endpoint.
+agent configure provider \
+  --name default \
+  --kind openai_compatible \
+  --model your-model \
+  --base-url https://your-endpoint/v1 \
+  --make-default
+
+# Native providers are supported too.
+agent configure provider --name gemini --kind gemini --model gemini-2.5-flash
+agent configure provider --name qwen --kind qwen --model qwen-plus
 ```
 
-正式发布必须显式使用 `--mode publish`。脚本只有获得公开文章 URL 才会报告发布成功；失败时默认保留当前窗口以便人工处理。浏览器登录状态位于本机用户数据目录，永远不会写入仓库。
+The CLI asks for the API key without echoing it and stores it in the Windows credential store. YAML contains a `secret_ref`, never a plaintext key. Provider configuration supports planning and optional report summarization; it does not grant an LLM arbitrary execution rights.
 
-## 项目结构
+## Extraction Is an Engine, Not the Product Claim
+
+The included `GenericSpider` is available when you need structured extraction from explicitly approved public sites. It uses three bounded paths:
+
+1. Configured CSS selectors.
+2. Scrapling adaptive parsing when a selector returns nothing.
+3. An explicitly enabled, page-local LLM selector suggestion as a last fallback.
+
+The third path is off by default, retries only on the current page, and degrades to an empty value with a log when it fails. It is not a promise to recover every changed website.
+
+For a repeatable, offline demonstration of selector drift and fallback behavior, run the [Page Evolution Lab](labs/page_evolution/README.md). It uses local fixtures only and never contacts a third-party site.
+
+## Workspaces and Artifacts
+
+Every task is isolated under `~/GenericCrawler/tasks/<task-id>/` by default:
 
 ```text
-configs/       站点与模板配置
-core/          通用爬虫引擎与 LLM 修复模块
-docs/          教育归档、技术文章与发布说明
-scripts/       现场验证与文章草稿工具
-tests/         离线夹具与单元测试
+task.json          Goal and state, without secrets
+plan.json          Restricted plan and visible targets
+approvals.jsonl    Approval audit trail
+run.jsonl          Execution events
+artifacts/         Source captures, normalized data, Markdown, and assets
+artifacts/report.md
+artifacts/sources.jsonl
 ```
 
-## 安全与贡献
+`agent export <task-id>` creates a portable archive of this evidence trail.
 
-- 不提交 API Key、Cookie、浏览器 profile、私有页面数据或采集结果。
-- 贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，安全问题见 [SECURITY.md](SECURITY.md)。
-- 本项目仅用于合法、获得授权的数据采集与工程研究；使用者须自行遵守适用法律、网站政策与速率限制。
+## Historical Education Archive
+
+The repository name and the `v1.0-educational` tag preserve an earlier single-site experiment. That tag is immutable historical material, not the active product line. It should not be used to bypass access controls, collect non-public data, or violate a service's terms.
+
+Read [the education archive note](docs/EDUCATIONAL_VERSION.md) for its purpose, limits, and the relationship to the local Page Evolution Lab.
+
+## Project Map
+
+```text
+agent.py               Approval-gated assistant CLI
+research_assistant/    Plans, providers, task workspaces, and registered tools
+workflows/             Versioned declarative workflows
+core/                  Configurable browser extraction and selector repair
+examples/              Small, reproducible local examples
+labs/                  Offline compatibility and teaching labs
+docs/                  Scope, architecture, workflows, and launch material
+tests/                 Offline unit and integration tests
+```
+
+## Safety and Contribution
+
+- Use only public, authorized sources and data you are allowed to process.
+- Do not commit API keys, browser profiles, cookies, private page captures, or task output.
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) before proposing a workflow or plugin.
+- Report sensitive issues through [SECURITY.md](SECURITY.md), not public issues.
+- See [ROADMAP.md](ROADMAP.md) for the next reviewed extensions.
 
 ## License
 

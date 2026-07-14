@@ -1,0 +1,16 @@
+name: page-evolution-lab
+mode: local-fixture
+description: Synthetic fixtures for selector drift and page-state schema review.
+
+fields:
+  - name: title
+    selector: ".product-card .product-title"
+    description: "catalog title"
+  - name: score
+    selector: ".product-card .product-score"
+    description: "catalog score"
+
+notes:
+  - This is not a live spider configuration.
+  - The lab runner never opens a network connection.
+  - v3 demonstrates an inline JSON state shape only; it does not evaluate page JavaScript.

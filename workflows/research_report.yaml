@@ -1,0 +1,37 @@
+version: 1
+name: research_report
+summary: "公开来源研究报告：$task.goal"
+steps:
+  - id: fetch_urls
+    when: has_urls
+    for_each: urls
+    tool: web.fetch
+    description: "读取公开网页：$item"
+    arguments:
+      url: "$item"
+  - id: read_files
+    when: has_input_files
+    for_each: input_files
+    tool: file.read
+    description: "读取已明确提供的文件：$item"
+    arguments:
+      path: "$item"
+  - id: search_topic
+    when: no_sources
+    tool: web.search
+    description: "根据任务目标搜索公开候选来源"
+    arguments:
+      query: "$task.goal"
+  - id: normalize
+    tool: data.normalize
+    description: "去重并整理已批准来源"
+    arguments: {}
+  - id: summarize
+    when: provider_configured
+    tool: report.summarize
+    description: "将已批准数据发送给已配置模型生成摘要"
+    arguments: {}
+  - id: report
+    tool: report.compose
+    description: "生成带来源清单的 Markdown 报告"
+    arguments: {}

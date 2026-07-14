@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="240" viewBox="0 0 720 240" role="img" aria-label="Review ready content workflow map">
+  <rect width="720" height="240" fill="#10211f"/>
+  <g fill="#f4fbf7" font-family="Arial, sans-serif" font-size="30" font-weight="700" text-anchor="middle">
+    <text x="128" y="130">Source</text>
+    <text x="360" y="130">Review</text>
+    <text x="592" y="130">Draft</text>
+  </g>
+  <g stroke="#e9b44c" stroke-width="6" fill="none">
+    <path d="M210 120 H278"/>
+    <path d="M442 120 H510"/>
+  </g>
+  <g fill="#e9b44c">
+    <path d="M278 120 l-16 -11 v22 z"/>
+    <path d="M510 120 l-16 -11 v22 z"/>
+  </g>
+  <g fill="none" stroke="#e9b44c" stroke-width="2">
+    <rect x="38" y="72" width="180" height="96" rx="8"/>
+    <rect x="270" y="72" width="180" height="96" rx="8"/>
+    <rect x="502" y="72" width="180" height="96" rx="8"/>
+  </g>
+</svg>

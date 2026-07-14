@@ -1,0 +1,37 @@
+version: 1
+name: web_to_markdown
+summary: "公开来源 Markdown 知识包：$task.goal"
+requires:
+  - sources
+steps:
+  - id: fetch_urls
+    when: has_urls
+    for_each: urls
+    tool: web.fetch
+    description: "读取公开网页：$item"
+    arguments:
+      url: "$item"
+  - id: read_files
+    when: has_input_files
+    for_each: input_files
+    tool: file.read
+    description: "读取已明确提供的文件：$item"
+    arguments:
+      path: "$item"
+  - id: normalize
+    tool: data.normalize
+    description: "去重并整理已批准来源"
+    arguments: {}
+  - id: markdown_table
+    tool: data.to_markdown
+    description: "将整理后的数据转换为 Markdown 表格"
+    arguments: {}
+  - id: summarize
+    when: provider_configured
+    tool: report.summarize
+    description: "将已批准数据发送给已配置模型生成摘要"
+    arguments: {}
+  - id: report
+    tool: report.compose
+    description: "生成带来源清单的 Markdown 报告"
+    arguments: {}
