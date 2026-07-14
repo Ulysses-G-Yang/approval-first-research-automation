@@ -3,8 +3,7 @@ name: CI
 on:
   push:
     branches:
-      - feat/general-crawler
-      - codex/product-identity
+      - main
   pull_request:
 
 permissions:

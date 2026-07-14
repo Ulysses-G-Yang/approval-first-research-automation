@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are applied to the current `feat/general-crawler` branch and the latest release.
+Security fixes are applied to the current `main` branch and the latest release.
 
 ## Reporting a vulnerability
 
