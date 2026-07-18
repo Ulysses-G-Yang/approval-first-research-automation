@@ -31,6 +31,9 @@ configs/*-systemchrome.yaml
 scripts/publish_states/
 scripts/browser_state/
 
+# Repair memory and demo artifacts (local only)
+*.demo_repairs.jsonl
+
 # Logs and editor settings
 *.log
 .vscode/
