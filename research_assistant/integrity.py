@@ -4,6 +4,8 @@ import hashlib
 import json
 from typing import Any, Dict, Mapping, Tuple
 
+import yaml
+
 from .models import PlanStep, TaskPlan, TaskSpec
 from .workspace import TaskWorkspace, WorkspaceError
 
@@ -59,6 +61,23 @@ def approval_manifest(
                 "committed": artifact.committed,
             }
         )
+    tool_input: Dict[str, Any] = {}
+    if step.call.tool_name == "browser.extract":
+        from .tools import ApprovedCrawlerSpec, MAX_CRAWLER_CONFIG_BYTES
+
+        config_path = workspace.resolve_input_snapshot(str(step.call.arguments["config_path"]), task)
+        if config_path.stat().st_size > MAX_CRAWLER_CONFIG_BYTES:
+            raise WorkspaceError(f"Crawler config exceeded the {MAX_CRAWLER_CONFIG_BYTES} byte safety limit.")
+        spec = ApprovedCrawlerSpec.from_mapping(yaml.safe_load(config_path.read_text(encoding="utf-8")) or {})
+        tool_input = {
+            "approved_crawler": {
+                "config": spec.config,
+                "start_urls": list(spec.start_urls),
+                "approved_hosts": sorted(spec.approved_hosts),
+                "max_requests": spec.max_requests,
+                "max_duration_seconds": spec.max_duration_seconds,
+            }
+        }
     return {
         "schema": "approval-execution-manifest/v1",
         "task": {
@@ -77,6 +96,7 @@ def approval_manifest(
         },
         "workflow_metadata": workflow_metadata,
         "execution_environment": environment,
+        "tool_input": tool_input,
         "inputs": workspace.verify_input_snapshots(task),
         # Artifact order is semantic today: several built-in tools consume the
         # latest artifact of a kind, so it must be part of the approval.

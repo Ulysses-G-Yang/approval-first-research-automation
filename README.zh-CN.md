@@ -216,6 +216,10 @@ git diff --check
 不可变历史示例保留，不代表生产级能力。详见
 [教育版本说明](docs/EDUCATIONAL_VERSION.md)。
 
+审批模式的网页工具通过严格 Crawler 配置、批准主机检查和浏览器请求拦截提供应用层纵深防御，
+但它不是完整的网络沙箱；DNS rebinding 残余风险见 [Security Policy](SECURITY.md)。
+Standalone `GenericSpider` 的旧配置兼容模式不属于这条审批安全边界。
+
 ## 许可证
 
 [MIT](LICENSE)

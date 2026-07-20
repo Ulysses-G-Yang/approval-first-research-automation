@@ -228,6 +228,12 @@ line generalizes the crawler engine and keeps the single-site material as an
 immutable historical example, not a production claim. See
 [Educational Version](docs/EDUCATIONAL_VERSION.md).
 
+Assistant-mode web tools add strict crawler configuration, approved-host checks,
+and browser request interception as application-layer defense in depth. This is
+not a complete network sandbox; DNS rebinding remains tracked in
+[Security Policy](SECURITY.md). Standalone `GenericSpider` legacy configuration
+is outside this approval boundary.
+
 ## License
 
 [MIT](LICENSE)

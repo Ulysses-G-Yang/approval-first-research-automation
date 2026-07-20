@@ -1,0 +1,33 @@
+name: approved-public-page
+description: Minimal crawler configuration for the approval-gated browser workflow
+
+start_url: https://example.com/
+
+browser:
+  headless: true
+  stealth: false
+
+request:
+  timeout_ms: 30000
+  wait_until: domcontentloaded
+
+pagination:
+  enabled: false
+  max_pages: 1
+  delay_ms: 0
+
+item_selector: body
+enable_adaptive: false
+
+fields:
+  - name: title
+    selector: h1
+    scope: item
+  - name: url
+    source: page_url
+    scope: page
+
+network:
+  allowed_hosts: []
+  max_requests: 100
+  max_duration_seconds: 60

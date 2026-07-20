@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import csv
 import hashlib
 import ipaddress
 import json
+import logging
 import re
 import socket
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Collection, Dict, Iterable, List, Optional
 from urllib.parse import quote_plus, urljoin, urlparse
 
 import yaml
@@ -20,7 +22,11 @@ from .registry import ToolContext, ToolError, ToolResult
 
 MAX_INPUT_BYTES = 5 * 1024 * 1024
 MAX_WEB_BYTES = 1 * 1024 * 1024
+MAX_CRAWLER_CONFIG_BYTES = 256 * 1024
 SUPPORTED_FILE_SUFFIXES = {".csv", ".json", ".md", ".markdown", ".txt"}
+logger = logging.getLogger(__name__)
+_ALLOWED_NETWORK_PORTS = {80, 443}
+_DNS_TIMEOUT_SECONDS = 5.0
 
 
 def utc_now() -> str:
@@ -59,7 +65,16 @@ def _is_public_ip(address: str) -> bool:
     return bool(ip.is_global)
 
 
-def validate_public_url(url: str, resolver: Callable[..., Any] = socket.getaddrinfo) -> str:
+def _normalized_hostname(url: str) -> str:
+    return (urlparse(url).hostname or "").rstrip(".").lower()
+
+
+def validate_public_url(
+    url: str,
+    resolver: Callable[..., Any] = socket.getaddrinfo,
+    *,
+    approved_hosts: Optional[Collection[str]] = None,
+) -> str:
     """Reject local/private targets before a network tool makes a request.
 
     This is deliberately conservative. The V1 assistant only reads public HTTP(S)
@@ -68,8 +83,18 @@ def validate_public_url(url: str, resolver: Callable[..., Any] = socket.getaddri
     parsed = urlparse(url.strip())
     if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
         raise ToolError("Only public http(s) URLs without credentials are supported.")
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError as exc:
+        raise ToolError("URL contains an invalid port.") from exc
+    if port not in _ALLOWED_NETWORK_PORTS:
+        raise ToolError("Only network ports 80 and 443 are supported.")
 
     hostname = parsed.hostname.rstrip(".").lower()
+    if approved_hosts is not None and hostname not in {
+        str(host).rstrip(".").lower() for host in approved_hosts
+    }:
+        raise ToolError(f"Network target host is not approved: {hostname}")
     if hostname == "localhost" or hostname.endswith(".localhost") or hostname.endswith(".local"):
         raise ToolError("Local network targets are not supported.")
 
@@ -80,7 +105,7 @@ def validate_public_url(url: str, resolver: Callable[..., Any] = socket.getaddri
         pass
 
     try:
-        records = resolver(hostname, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
+        records = resolver(hostname, port, type=socket.SOCK_STREAM)
     except OSError as exc:
         raise ToolError(f"Could not resolve public URL host: {hostname}") from exc
 
@@ -90,10 +115,36 @@ def validate_public_url(url: str, resolver: Callable[..., Any] = socket.getaddri
     return parsed.geturl()
 
 
+async def validate_public_url_async(
+    url: str,
+    *,
+    approved_hosts: Optional[Collection[str]] = None,
+    timeout_seconds: float = _DNS_TIMEOUT_SECONDS,
+) -> str:
+    """Resolve a public URL off the event loop and bound DNS validation time."""
+    try:
+        validation = (
+            asyncio.to_thread(validate_public_url, url)
+            if approved_hosts is None
+            else asyncio.to_thread(validate_public_url, url, approved_hosts=approved_hosts)
+        )
+        return await asyncio.wait_for(
+            validation,
+            timeout=timeout_seconds,
+        )
+    except asyncio.TimeoutError as exc:
+        raise ToolError("Public URL DNS validation timed out.") from exc
+
+
 def _looks_like_public_http_url(url: str) -> bool:
     """Perform a no-network URL check while parsing an explicit local URL list."""
     parsed = urlparse(url.strip())
     if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        return False
+    try:
+        if (parsed.port or (443 if parsed.scheme == "https" else 80)) not in _ALLOWED_NETWORK_PORTS:
+            return False
+    except ValueError:
         return False
     hostname = parsed.hostname.rstrip(".").lower()
     if hostname == "localhost" or hostname.endswith(".localhost") or hostname.endswith(".local"):
@@ -110,10 +161,12 @@ async def _http_get(url: str, timeout_seconds: float, max_bytes: int) -> tuple[s
     except Exception as exc:  # pragma: no cover - dependency guard
         raise ToolError("httpx is required for web tools. Install requirements.txt first.") from exc
 
-    current_url = validate_public_url(url)
+    approved_hosts = {_normalized_hostname(url)}
+    current_url = await validate_public_url_async(url, approved_hosts=approved_hosts)
     async with httpx.AsyncClient(
         timeout=timeout_seconds,
         follow_redirects=False,
+        trust_env=False,
         headers={"User-Agent": "GenericCrawlerResearchAssistant/0.1 (+local approved task)"},
     ) as client:
         for _ in range(5):
@@ -127,7 +180,10 @@ async def _http_get(url: str, timeout_seconds: float, max_bytes: int) -> tuple[s
                     location = response.headers.get("location")
                     if not location:
                         raise ToolError("Redirect response did not include a location.")
-                    current_url = validate_public_url(urljoin(current_url, location))
+                    current_url = await validate_public_url_async(
+                        urljoin(current_url, location),
+                        approved_hosts=approved_hosts,
+                    )
                     continue
                 try:
                     response.raise_for_status()
@@ -164,7 +220,7 @@ class WebFetchTool:
     recovery_strategy: str = "remote_read"
 
     async def run(self, context: ToolContext, arguments: Dict[str, Any]) -> ToolResult:
-        url = validate_public_url(str(arguments["url"]))
+        url = await validate_public_url_async(str(arguments["url"]))
         final_url, headers, status_code, html = await _http_get(
             url,
             timeout_seconds=float(arguments.get("timeout_seconds", 20)),
@@ -222,10 +278,9 @@ class WebSearchTool:
             flags=re.IGNORECASE | re.DOTALL,
         ):
             candidate = urljoin(final_url, href)
-            try:
-                public_url = validate_public_url(candidate)
-            except ToolError:
+            if not _looks_like_public_http_url(candidate):
                 continue
+            public_url = urlparse(candidate).geturl()
             results.append({"title": _strip_html(title), "url": public_url})
             if len(results) >= result_limit:
                 break
@@ -676,6 +731,301 @@ class ReportComposeTool:
         return ToolResult("Created traceable Markdown report.", artifacts=[report_artifact, sources_artifact])
 
 
+_CRAWLER_TOP_LEVEL_KEYS = {
+    "name",
+    "description",
+    "start_url",
+    "start_urls",
+    "browser",
+    "request",
+    "pagination",
+    "item_selector",
+    "fields",
+    "payload_key",
+    "enable_adaptive",
+    "network",
+}
+_BROWSER_KEYS = {"headless", "stealth"}
+_REQUEST_KEYS = {"timeout_ms", "wait_until", "wait_for_selector"}
+_PAGINATION_KEYS = {"enabled", "max_pages", "next_selector", "delay_ms"}
+_FIELD_KEYS = {"name", "selector", "attr", "description", "source", "scope"}
+_NETWORK_KEYS = {"allowed_hosts", "max_requests", "max_duration_seconds"}
+_WAIT_UNTIL_VALUES = {"commit", "domcontentloaded", "load", "networkidle"}
+
+
+def _require_mapping(value: Any, label: str) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ToolError(f"{label} must be a mapping.")
+    return dict(value)
+
+
+def _reject_unknown_keys(value: Dict[str, Any], allowed: set[str], label: str) -> None:
+    unknown = sorted(str(key) for key in value if key not in allowed)
+    if unknown:
+        raise ToolError(f"{label} contains unsupported fields: {', '.join(unknown)}")
+
+
+def _bounded_int(value: Any, label: str, minimum: int, maximum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ToolError(f"{label} must be an integer.")
+    if not minimum <= value <= maximum:
+        raise ToolError(f"{label} must be between {minimum} and {maximum}.")
+    return value
+
+
+def _bounded_number(value: Any, label: str, minimum: float, maximum: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ToolError(f"{label} must be a number.")
+    result = float(value)
+    if not minimum <= result <= maximum:
+        raise ToolError(f"{label} must be between {minimum:g} and {maximum:g}.")
+    return result
+
+
+def _parse_declared_url(url: Any) -> tuple[str, str]:
+    if not isinstance(url, str) or not url.strip():
+        raise ToolError("Crawler start URLs must be non-empty strings.")
+    parsed = urlparse(url.strip())
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError as exc:
+        raise ToolError("Crawler start URL contains an invalid port.") from exc
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        raise ToolError("Crawler start URLs must be HTTP(S) URLs without credentials.")
+    if port not in _ALLOWED_NETWORK_PORTS:
+        raise ToolError("Crawler start URLs may only use ports 80 or 443.")
+    return parsed.geturl(), parsed.hostname.rstrip(".").lower()
+
+
+def _parse_host(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ToolError("network.allowed_hosts entries must be non-empty hostnames.")
+    candidate = value.strip().rstrip(".").lower()
+    try:
+        parsed = urlparse(f"https://{candidate}")
+        port = parsed.port
+    except ValueError as exc:
+        raise ToolError(f"Invalid approved network hostname: {value}") from exc
+    if (
+        not parsed.hostname
+        or parsed.hostname.rstrip(".").lower() != candidate
+        or port is not None
+        or parsed.path not in {"", "/"}
+        or parsed.username
+        or parsed.password
+        or "*" in candidate
+    ):
+        raise ToolError(f"Invalid approved network hostname: {value}")
+    if candidate == "localhost" or candidate.endswith(".localhost") or candidate.endswith(".local"):
+        raise ToolError("Local network hosts cannot be approved.")
+    try:
+        if not _is_public_ip(candidate):
+            raise ToolError("Non-public network addresses cannot be approved.")
+    except ValueError:
+        pass
+    return candidate
+
+
+@dataclass(frozen=True)
+class ApprovedCrawlerSpec:
+    """Strict crawler configuration accepted by the approval-gated browser tool.
+
+    The standalone ``GenericSpider`` continues to accept its legacy configuration.
+    This schema is intentionally smaller because an approved local YAML file is
+    not allowed to choose executables, browser profiles, proxies, CDP endpoints,
+    arbitrary actions, or model endpoints.
+    """
+
+    config: Dict[str, Any]
+    start_urls: tuple[str, ...]
+    approved_hosts: frozenset[str]
+    max_requests: int = 200
+    max_duration_seconds: float = 120.0
+
+    @classmethod
+    def from_mapping(cls, raw: Any) -> "ApprovedCrawlerSpec":
+        config = _require_mapping(raw, "Crawler config")
+        _reject_unknown_keys(config, _CRAWLER_TOP_LEVEL_KEYS, "Crawler config")
+
+        urls: List[str] = []
+        hosts: set[str] = set()
+        if config.get("start_url") is not None:
+            url, host = _parse_declared_url(config["start_url"])
+            urls.append(url)
+            hosts.add(host)
+            config["start_url"] = url
+        raw_start_urls = config.get("start_urls", []) or []
+        if not isinstance(raw_start_urls, list):
+            raise ToolError("start_urls must be a list.")
+        normalized_start_urls: List[str] = []
+        for raw_url in raw_start_urls:
+            url, host = _parse_declared_url(raw_url)
+            normalized_start_urls.append(url)
+            urls.append(url)
+            hosts.add(host)
+            if len(urls) > 50:
+                raise ToolError("Crawler config may declare at most 50 start URLs.")
+        if normalized_start_urls or "start_urls" in config:
+            config["start_urls"] = normalized_start_urls
+        if not urls:
+            raise ToolError("Crawler config must declare start_url or start_urls.")
+
+        browser = _require_mapping(config.get("browser", {}), "browser")
+        _reject_unknown_keys(browser, _BROWSER_KEYS, "browser")
+        for key in browser:
+            if not isinstance(browser[key], bool):
+                raise ToolError(f"browser.{key} must be a boolean.")
+        if browser or "browser" in config:
+            config["browser"] = browser
+
+        request = _require_mapping(config.get("request", {}), "request")
+        _reject_unknown_keys(request, _REQUEST_KEYS, "request")
+        if "timeout_ms" in request:
+            request["timeout_ms"] = _bounded_int(
+                request["timeout_ms"], "request.timeout_ms", 1, 60_000
+            )
+        if "wait_until" in request and request["wait_until"] not in _WAIT_UNTIL_VALUES:
+            raise ToolError("request.wait_until is not supported.")
+        if "wait_for_selector" in request and not isinstance(request["wait_for_selector"], str):
+            raise ToolError("request.wait_for_selector must be a string.")
+        if request or "request" in config:
+            config["request"] = request
+
+        pagination = _require_mapping(config.get("pagination", {}), "pagination")
+        _reject_unknown_keys(pagination, _PAGINATION_KEYS, "pagination")
+        if "enabled" in pagination and not isinstance(pagination["enabled"], bool):
+            raise ToolError("pagination.enabled must be a boolean.")
+        if "max_pages" in pagination:
+            pagination["max_pages"] = _bounded_int(
+                pagination["max_pages"], "pagination.max_pages", 1, 50
+            )
+        if "delay_ms" in pagination:
+            pagination["delay_ms"] = _bounded_int(
+                pagination["delay_ms"], "pagination.delay_ms", 0, 60_000
+            )
+        if "next_selector" in pagination and not isinstance(pagination["next_selector"], str):
+            raise ToolError("pagination.next_selector must be a string.")
+        if pagination or "pagination" in config:
+            config["pagination"] = pagination
+
+        fields = config.get("fields", []) or []
+        if not isinstance(fields, list):
+            raise ToolError("fields must be a list.")
+        normalized_fields: List[Dict[str, Any]] = []
+        for index, raw_field in enumerate(fields):
+            field = _require_mapping(raw_field, f"fields[{index}]")
+            _reject_unknown_keys(field, _FIELD_KEYS, f"fields[{index}]")
+            for key, value in field.items():
+                if value is not None and not isinstance(value, str):
+                    raise ToolError(f"fields[{index}].{key} must be a string or null.")
+            normalized_fields.append(field)
+        config["fields"] = normalized_fields
+
+        for key in ("name", "description", "item_selector", "payload_key"):
+            if key in config and not isinstance(config[key], str):
+                raise ToolError(f"{key} must be a string.")
+        if "enable_adaptive" in config and not isinstance(config["enable_adaptive"], bool):
+            raise ToolError("enable_adaptive must be a boolean.")
+
+        network = _require_mapping(config.pop("network", {}), "network")
+        _reject_unknown_keys(network, _NETWORK_KEYS, "network")
+        allowed_hosts = network.get("allowed_hosts", []) or []
+        if not isinstance(allowed_hosts, list):
+            raise ToolError("network.allowed_hosts must be a list.")
+        hosts.update(_parse_host(value) for value in allowed_hosts)
+        max_requests = _bounded_int(network.get("max_requests", 200), "network.max_requests", 1, 2_000)
+        max_duration_seconds = _bounded_number(
+            network.get("max_duration_seconds", 120),
+            "network.max_duration_seconds",
+            1,
+            600,
+        )
+
+        return cls(
+            config=config,
+            start_urls=tuple(urls),
+            approved_hosts=frozenset(hosts),
+            max_requests=max_requests,
+            max_duration_seconds=max_duration_seconds,
+        )
+
+
+@dataclass
+class BrowserRequestPolicy:
+    approved_hosts: frozenset[str]
+    max_requests: int
+    request_count: int = 0
+    violation: Optional[str] = None
+
+    @property
+    def context_options(self) -> Dict[str, Any]:
+        return {"accept_downloads": False, "service_workers": "block"}
+
+    @property
+    def launch_options(self) -> Dict[str, Any]:
+        return {
+            "args": [
+                "--disable-background-networking",
+                "--disable-component-update",
+                "--disable-domain-reliability",
+                "--disable-quic",
+                "--disable-sync",
+                "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+                "--metrics-recording-only",
+                "--no-first-run",
+            ]
+        }
+
+    async def install(self, context: Any) -> None:
+        await context.route("**/*", self._handle_route)
+        add_init_script = getattr(context, "add_init_script", None)
+        if callable(add_init_script):
+            await add_init_script(
+                """
+                (() => {
+                  for (const name of ['RTCPeerConnection', 'webkitRTCPeerConnection']) {
+                    try { Object.defineProperty(globalThis, name, {value: undefined, configurable: false}); }
+                    catch (_) {}
+                  }
+                })();
+                """
+            )
+        route_web_socket = getattr(context, "route_web_socket", None)
+        if callable(route_web_socket):
+            await route_web_socket("**/*", self._handle_websocket)
+
+    def _record_violation(self, message: str) -> None:
+        if self.violation is None:
+            self.violation = message
+
+    async def _handle_websocket(self, socket_route: Any) -> None:
+        message = "Browser WebSockets are disabled by the approved crawler policy."
+        self._record_violation(message)
+        await socket_route.close(code=1008, reason=message)
+
+    def raise_if_violated(self) -> None:
+        if self.violation:
+            raise ToolError(f"Browser network policy blocked the run: {self.violation}")
+
+    async def _handle_route(self, route: Any) -> None:
+        request = route.request
+        self.request_count += 1
+        try:
+            if self.request_count > self.max_requests:
+                raise ToolError("Browser request limit exceeded.")
+            if str(request.method).upper() not in {"GET", "HEAD", "OPTIONS"}:
+                raise ToolError(f"Browser method is not allowed: {request.method}")
+            if str(getattr(request, "resource_type", "")).lower() == "websocket":
+                raise ToolError("Browser WebSocket requests are not allowed.")
+            await validate_public_url_async(str(request.url), approved_hosts=self.approved_hosts)
+        except ToolError as exc:
+            self._record_violation(str(exc))
+            logger.warning("Blocked browser request %s: %s", getattr(request, "url", ""), exc)
+            await route.abort("blockedbyclient")
+            return
+        await route.continue_()
+
+
 @dataclass
 class BrowserExtractTool:
     """Expose the existing YAML crawler through the task approval boundary."""
@@ -691,22 +1041,35 @@ class BrowserExtractTool:
         path = context.resolve_input(str(arguments["config_path"]))
         if path.suffix.lower() not in {".yaml", ".yml"}:
             raise ToolError("browser.extract requires an explicitly supplied YAML config.")
-        config = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        if not isinstance(config, dict):
-            raise ToolError("Crawler config must be a YAML mapping.")
-        if config.get("actions"):
-            raise ToolError("Agent browser.extract does not permit YAML actions in V1.")
-        llm = config.get("llm")
-        if isinstance(llm, dict) and llm.get("api_key"):
-            raise ToolError("Crawler configs used by the agent must not contain an API key.")
-        urls = [config.get("start_url"), *(config.get("start_urls") or [])]
-        for url in urls:
-            if url:
-                validate_public_url(str(url))
+        if path.stat().st_size > MAX_CRAWLER_CONFIG_BYTES:
+            raise ToolError(f"Crawler config exceeded the {MAX_CRAWLER_CONFIG_BYTES} byte safety limit.")
+        spec = ApprovedCrawlerSpec.from_mapping(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
 
         from core.spider_engine import GenericSpider
 
-        records = await GenericSpider(config).run()
+        policy = BrowserRequestPolicy(spec.approved_hosts, spec.max_requests)
+
+        async def execute() -> List[Dict[str, Any]]:
+            for url in spec.start_urls:
+                await validate_public_url_async(url, approved_hosts=spec.approved_hosts)
+            result = await GenericSpider(spec.config, network_policy=policy).run()
+            policy.raise_if_violated()
+            return result
+
+        try:
+            records = await asyncio.wait_for(
+                execute(),
+                timeout=spec.max_duration_seconds,
+            )
+        except asyncio.TimeoutError as exc:
+            policy.raise_if_violated()
+            raise ToolError(
+                f"Browser extraction exceeded the {spec.max_duration_seconds:g} second limit."
+            ) from exc
+        except Exception:
+            policy.raise_if_violated()
+            raise
+        policy.raise_if_violated()
         artifact = context.workspace.write_json_artifact(
             _filename("crawl", str(path), ".json"),
             records,
@@ -750,7 +1113,9 @@ from .content_tools import ContentPrepareDraftTool
 from .document_tools import DocumentConvertTool, DocumentInspectTool, MarkdownValidateTool
 
 __all__ = [
+    "ApprovedCrawlerSpec",
     "BrowserExtractTool",
+    "BrowserRequestPolicy",
     "ContentPrepareDraftTool",
     "DataNormalizeTool",
     "DocumentConvertTool",
@@ -765,4 +1130,5 @@ __all__ = [
     "WebSearchTool",
     "build_default_registry",
     "validate_public_url",
+    "validate_public_url_async",
 ]
