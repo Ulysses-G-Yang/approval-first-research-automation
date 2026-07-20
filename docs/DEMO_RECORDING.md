@@ -20,6 +20,6 @@ For a release GIF, record a real terminal session with the local `examples/resea
 2. Create the example task with `--workspace-root .demo-tasks`.
 3. Show the printed plan before approving `step-01`.
 4. Approve and resume each step.
-5. Open the resulting `artifacts/report.md` and `artifacts/sources.jsonl`.
+5. Use `agent status <TASK_ID>` to locate the versioned `report.md` and `sources.jsonl` artifacts, then open them.
 
 Do not record a browser login, a real API key, a personal document, or a platform publication. The GIF should show a real, local, reproducible workflow rather than a simulated external success.

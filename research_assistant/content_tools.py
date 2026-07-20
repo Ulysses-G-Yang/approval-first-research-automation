@@ -29,6 +29,7 @@ class ContentPrepareDraftTool:
     risk: RiskLevel = RiskLevel.WRITE
     required_arguments: tuple[str, ...] = ("platform",)
     allowed_arguments: tuple[str, ...] = ("platform",)
+    recovery_strategy: str = "local_deterministic"
 
     async def run(self, context: ToolContext, arguments: Dict[str, Any]) -> ToolResult:
         platform = str(arguments["platform"]).strip().lower()

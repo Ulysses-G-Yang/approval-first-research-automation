@@ -21,6 +21,7 @@ class StepStatus(str, Enum):
     PLANNED = "planned"
     APPROVED = "approved"
     RUNNING = "running"
+    RECOVERY_REQUIRED = "recovery_required"
     COMPLETED = "completed"
     REJECTED = "rejected"
     FAILED = "failed"
@@ -30,6 +31,7 @@ class TaskStatus(str, Enum):
     PLANNED = "planned"
     WAITING_APPROVAL = "waiting_approval"
     RUNNING = "running"
+    RECOVERY_REQUIRED = "recovery_required"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -43,6 +45,11 @@ class Artifact:
     created_at: str = field(default_factory=utc_now)
     source_url: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    sha256: str = ""
+    size_bytes: int = 0
+    step_id: Optional[str] = None
+    attempt_id: Optional[str] = None
+    committed: bool = True
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -53,6 +60,11 @@ class Artifact:
             "created_at": self.created_at,
             "source_url": self.source_url,
             "metadata": self.metadata,
+            "sha256": self.sha256,
+            "size_bytes": self.size_bytes,
+            "step_id": self.step_id,
+            "attempt_id": self.attempt_id,
+            "committed": self.committed,
         }
 
     @classmethod
@@ -65,6 +77,11 @@ class Artifact:
             created_at=str(data.get("created_at", utc_now())),
             source_url=data.get("source_url"),
             metadata=dict(data.get("metadata") or {}),
+            sha256=str(data.get("sha256", "")),
+            size_bytes=int(data.get("size_bytes", 0)),
+            step_id=data.get("step_id"),
+            attempt_id=data.get("attempt_id"),
+            committed=bool(data.get("committed", True)),
         )
 
 
@@ -129,6 +146,9 @@ class PlanStep:
     status: StepStatus = StepStatus.PLANNED
     artifact_ids: List[str] = field(default_factory=list)
     error: Optional[str] = None
+    approval_fingerprint: Optional[str] = None
+    approval_manifest: Dict[str, Any] = field(default_factory=dict)
+    attempt_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -138,6 +158,9 @@ class PlanStep:
             "status": self.status.value,
             "artifact_ids": self.artifact_ids,
             "error": self.error,
+            "approval_fingerprint": self.approval_fingerprint,
+            "approval_manifest": self.approval_manifest,
+            "attempt_id": self.attempt_id,
         }
 
     @classmethod
@@ -149,6 +172,9 @@ class PlanStep:
             status=StepStatus(str(data.get("status", StepStatus.PLANNED.value))),
             artifact_ids=[str(item) for item in data.get("artifact_ids") or []],
             error=data.get("error"),
+            approval_fingerprint=data.get("approval_fingerprint"),
+            approval_manifest=dict(data.get("approval_manifest") or {}),
+            attempt_id=data.get("attempt_id"),
         )
 
 

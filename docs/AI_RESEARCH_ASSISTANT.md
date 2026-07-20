@@ -124,11 +124,11 @@ plan.json          模型或内置工作流生成的受限工具计划
 approvals.jsonl    每次规划或步骤批准的审计记录
 run.jsonl          执行日志
 artifacts/         原始网页/文件、清洗数据、Markdown 表格和报告
-artifacts/report.md
-artifacts/sources.jsonl
-artifacts/documents/<bundle>/article.md
-artifacts/documents/<bundle>/assets/
-artifacts/drafts/<platform>/draft-manifest.json
+artifacts/versions/<attempt-id>/report.md
+artifacts/versions/<attempt-id>/sources.jsonl
+artifacts/versions/<attempt-id>/documents/<bundle>/article.md
+artifacts/versions/<attempt-id>/documents/<bundle>/assets/
+artifacts/versions/<attempt-id>/drafts/<platform>/draft-manifest.json
 ```
 
 报告保留来源 URL、抓取/读取时间、产物路径和原始结构化数据；无法访问的页面会在对应步骤中失败并留下错误状态，不会被伪装为成功。`agent export` 将整个任务目录压缩，以便共享或归档。

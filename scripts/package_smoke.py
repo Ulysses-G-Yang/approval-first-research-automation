@@ -115,14 +115,18 @@ def main() -> int:
         task_id = match.group(1)
 
         for step_id in ("step-01", "step-02", "step-03"):
-            _run([agent, "approve", task_id, step_id, "--workspace-root", str(workspace_root)], root)
+            _run(
+                [agent, "approve", task_id, step_id, "--yes", "--workspace-root", str(workspace_root)],
+                root,
+            )
             _run([agent, "resume", task_id, "--workspace-root", str(workspace_root)], root)
 
         status_output = _run([agent, "status", task_id, "--workspace-root", str(workspace_root)], root)
         if "Status: completed" not in status_output:
             raise RuntimeError(f"Installed workflow did not complete:\n{status_output}")
-        if not (workspace_root / task_id / "artifacts" / "report.md").is_file():
-            raise RuntimeError("Installed workflow did not create report.md.")
+        reports = list((workspace_root / task_id / "artifacts" / "versions").rglob("report.md"))
+        if len(reports) != 1 or not reports[0].is_file():
+            raise RuntimeError(f"Installed workflow did not create one versioned report.md: {reports}")
 
     print(
         "Installed distribution smoke test passed: "

@@ -6,7 +6,7 @@ from typing import Any, Dict, Iterable, List, Optional, Protocol
 
 from .models import Artifact, RiskLevel, TaskSpec
 from .providers import ModelProvider
-from .workspace import TaskWorkspace
+from .workspace import TaskWorkspace, WorkspaceError
 
 
 class ToolError(RuntimeError):
@@ -29,15 +29,14 @@ class ToolContext:
     task: TaskSpec
     workspace: TaskWorkspace
     provider: Optional[ModelProvider] = None
+    attempt_id: Optional[str] = None
+    idempotency_key: Optional[str] = None
 
     def resolve_input(self, raw_path: str) -> Path:
-        candidate = Path(raw_path).expanduser().resolve()
-        allowed = {Path(path).expanduser().resolve() for path in self.task.input_files}
-        if candidate not in allowed:
-            raise ToolPermissionError("Tool may only read files explicitly supplied with --input.")
-        if not candidate.is_file():
-            raise ToolPermissionError(f"Input file does not exist: {candidate}")
-        return candidate
+        try:
+            return self.workspace.resolve_input_snapshot(raw_path, self.task)
+        except WorkspaceError as exc:
+            raise ToolPermissionError(str(exc)) from exc
 
     def artifacts(self, kind: Optional[str] = None) -> List[Artifact]:
         return self.workspace.list_artifacts(kind=kind)
@@ -49,6 +48,7 @@ class Tool(Protocol):
     risk: RiskLevel
     required_arguments: tuple[str, ...]
     allowed_arguments: tuple[str, ...]
+    recovery_strategy: str
 
     async def run(self, context: ToolContext, arguments: Dict[str, Any]) -> ToolResult:
         ...
@@ -80,6 +80,7 @@ class ToolRegistry:
                 "risk": tool.risk.value,
                 "required_arguments": list(tool.required_arguments),
                 "allowed_arguments": list(getattr(tool, "allowed_arguments", ())),
+                "recovery_strategy": getattr(tool, "recovery_strategy", "unknown"),
             }
             for tool in (self._tools[name] for name in self.names())
         ]

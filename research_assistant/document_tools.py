@@ -332,6 +332,7 @@ class DocumentInspectTool:
     risk: RiskLevel = RiskLevel.READ
     required_arguments: tuple[str, ...] = ("path",)
     allowed_arguments: tuple[str, ...] = ("path",)
+    recovery_strategy: str = "local_deterministic"
 
     async def run(self, context: ToolContext, arguments: Dict[str, Any]) -> ToolResult:
         path = context.resolve_input(str(arguments["path"]))
@@ -353,6 +354,7 @@ class DocumentConvertTool:
     risk: RiskLevel = RiskLevel.WRITE
     required_arguments: tuple[str, ...] = ("path",)
     allowed_arguments: tuple[str, ...] = ("path",)
+    recovery_strategy: str = "local_deterministic"
 
     async def run(self, context: ToolContext, arguments: Dict[str, Any]) -> ToolResult:
         path = context.resolve_input(str(arguments["path"]))
@@ -407,6 +409,7 @@ class MarkdownValidateTool:
     risk: RiskLevel = RiskLevel.WRITE
     required_arguments: tuple[str, ...] = ()
     allowed_arguments: tuple[str, ...] = ()
+    recovery_strategy: str = "local_deterministic"
 
     async def run(self, context: ToolContext, arguments: Dict[str, Any]) -> ToolResult:
         documents = context.artifacts("markdown_document")
