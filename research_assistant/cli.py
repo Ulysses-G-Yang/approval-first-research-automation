@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
+from . import __version__
 from .models import TaskSpec
 from .planner import AgentPlanner, PlanningError
 from .plugins import PluginError, load_plugins
@@ -367,6 +368,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="agent",
         description="Approval-gated research automation for public sources and local files.",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     configure = subparsers.add_parser("configure", help="Configure a model provider without writing a key to YAML.")

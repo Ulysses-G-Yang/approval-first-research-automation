@@ -6,12 +6,20 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from research_assistant import __version__
 from research_assistant.cli import collect_doctor_report, main
 from research_assistant.secrets import InMemorySecretStore
 from research_assistant.settings import AgentSettings, ProviderConfig, save_settings
 
 
 class AgentCliTests(unittest.TestCase):
+    def test_version_flag_reports_package_version(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output), self.assertRaises(SystemExit) as raised:
+            main(["--version"])
+        self.assertEqual(raised.exception.code, 0)
+        self.assertEqual(output.getvalue().strip(), f"agent {__version__}")
+
     def test_list_workflows_prints_bundled_workflow_metadata(self) -> None:
         output = io.StringIO()
         with redirect_stdout(output):
