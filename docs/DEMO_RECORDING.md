@@ -8,7 +8,7 @@ Regenerate the static preview:
 python scripts/render_product_preview.py
 ```
 
-`docs/assets/workflow-overview.gif` is a three-frame visual overview generated from the same local HTML. It illustrates the product sequence only; it is not a recording of a live website, provider call, or publication.
+`docs/assets/workflow-overview.gif` is a three-frame visual overview generated from the same local HTML. It illustrates the optional assistant sequence only; it is not a recording of a live website, provider call, or publication.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\render_workflow_overview.ps1
