@@ -169,32 +169,20 @@ def _target_for(task: TaskSpec, tool_name: str, arguments: Dict[str, Any]) -> st
 
 def _browser_call_details(config_path: str) -> tuple[RiskLevel, str]:
     """Inspect only an explicitly supplied YAML file to make browser targets visible in the plan."""
+    from .tools import ApprovedCrawlerSpec, MAX_CRAWLER_CONFIG_BYTES
+
     path = Path(config_path)
     try:
+        if path.stat().st_size > MAX_CRAWLER_CONFIG_BYTES:
+            raise ToolError(f"Crawler config exceeded the {MAX_CRAWLER_CONFIG_BYTES} byte safety limit.")
         config = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except OSError as exc:
         raise ToolError(f"Could not read crawler config for planning: {path}") from exc
     except yaml.YAMLError as exc:
         raise ToolError(f"Crawler config is not valid YAML: {path}") from exc
-    if not isinstance(config, dict):
-        raise ToolError("Crawler config must be a YAML mapping.")
-    if config.get("actions"):
-        raise ToolError("Agent browser.extract does not permit YAML actions in V1.")
-    llm = config.get("llm") or {}
-    if isinstance(llm, dict) and llm.get("api_key"):
-        raise ToolError("Agent browser.extract does not permit a plaintext LLM API key.")
-    urls = [config.get("start_url"), *(config.get("start_urls") or [])]
-    hosts = sorted(
-        {
-            urlparse(str(url)).netloc
-            for url in urls
-            if isinstance(url, str) and url.strip() and urlparse(url).netloc
-        }
-    )
-    target = f"public web declared in {path.name}: {', '.join(hosts) or 'no valid URL declared'}"
-    if isinstance(llm, dict) and llm.get("enable_repair"):
-        provider = str(llm.get("provider", "configured LLM"))
-        return RiskLevel.SENSITIVE, f"{target}; configured selector-repair provider: {provider}"
+    spec = ApprovedCrawlerSpec.from_mapping(config)
+    hosts = sorted(spec.approved_hosts)
+    target = f"approved public web hosts declared in {path.name}: {', '.join(hosts)}"
     return RiskLevel.READ, target
 
 

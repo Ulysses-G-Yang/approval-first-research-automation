@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import inspect
@@ -13,6 +14,44 @@ from core.llm_repair import LLMRepair
 
 
 logger = logging.getLogger(__name__)
+_BROWSER_CLEANUP_TIMEOUT_SECONDS = 2.0
+
+
+def _consume_close_outcome(task: "asyncio.Task[Any]") -> None:
+    """Retrieve a detached cleanup result so it cannot emit an unhandled error."""
+    try:
+        task.result()
+    except BaseException:
+        pass
+
+
+async def _close_browser_resource(resource: Any, label: str) -> None:
+    """Attempt browser cleanup without allowing a stuck close to hang the run."""
+    close_task = asyncio.create_task(resource.close())
+    try:
+        done, _ = await asyncio.wait(
+            {close_task},
+            timeout=_BROWSER_CLEANUP_TIMEOUT_SECONDS,
+        )
+    except asyncio.CancelledError:
+        close_task.cancel()
+        close_task.add_done_callback(_consume_close_outcome)
+        raise
+    if not done:
+        close_task.cancel()
+        close_task.add_done_callback(_consume_close_outcome)
+        logger.warning(
+            "Timed out after %.1fs while closing %s.",
+            _BROWSER_CLEANUP_TIMEOUT_SECONDS,
+            label,
+        )
+        return
+    try:
+        close_task.result()
+    except asyncio.CancelledError:
+        logger.warning("Closing %s was cancelled.", label)
+    except Exception as exc:  # pragma: no cover - cleanup guard
+        logger.warning("Could not close %s cleanly: %s", label, exc)
 
 try:
     from scrapling.parser import Selector as ScraplingSelector
@@ -34,8 +73,11 @@ except Exception:  # pragma: no cover
 
 
 class GenericSpider:
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], network_policy: Any = None):
         self.config = config or {}
+        # The approval assistant supplies a restrictive policy. Direct, standalone
+        # callers keep the legacy configuration surface and behavior unchanged.
+        self.network_policy = network_policy
         self.name = self.config.get("name", "generic-spider")
         self.start_urls = self._collect_start_urls()
         self.browser_config = self.config.get("browser", {})
@@ -585,43 +627,61 @@ class GenericSpider:
         browser = None
         context = None
         async with async_playwright() as p:
-            cdp_url = self.browser_config.get("cdp_url")
-            if cdp_url:
-                browser = await p.chromium.connect_over_cdp(cdp_url)
-            else:
-                launch_kwargs = {
-                    "headless": bool(self.browser_config.get("headless", False)),
-                }
-                if args := self.browser_config.get("launch"):
-                    launch_kwargs.update({k: v for k, v in args.items() if v is not None})
-                browser = await p.chromium.launch(**launch_kwargs)
-
-            if browser.contexts:
-                context = browser.contexts[0]
-            else:
-                context_kwargs = self.browser_config.get("context", {})
-                context = await browser.new_context(**context_kwargs)
-
-            context_stealth_ready = await self._apply_context_stealth(context)
-
             try:
+                cdp_url = self.browser_config.get("cdp_url")
+                if cdp_url:
+                    browser = await p.chromium.connect_over_cdp(cdp_url)
+                else:
+                    launch_kwargs = {
+                        "headless": bool(self.browser_config.get("headless", False)),
+                    }
+                    if args := self.browser_config.get("launch"):
+                        launch_kwargs.update({k: v for k, v in args.items() if v is not None})
+                    if self.network_policy is not None:
+                        policy_launch = dict(getattr(self.network_policy, "launch_options", {}))
+                        policy_args = list(policy_launch.pop("args", []))
+                        launch_args = list(launch_kwargs.get("args", []))
+                        launch_kwargs["args"] = [
+                            *launch_args,
+                            *(arg for arg in policy_args if arg not in launch_args),
+                        ]
+                        launch_kwargs.update(policy_launch)
+                    browser = await p.chromium.launch(**launch_kwargs)
+
+                if browser.contexts:
+                    context = browser.contexts[0]
+                else:
+                    context_kwargs = dict(self.browser_config.get("context", {}))
+                    if self.network_policy is not None:
+                        context_kwargs.update(self.network_policy.context_options)
+                    context = await browser.new_context(**context_kwargs)
+
+                if self.network_policy is not None:
+                    await self.network_policy.install(context)
+
+                context_stealth_ready = await self._apply_context_stealth(context)
+
                 for start_url in self.start_urls:
                     page = await context.new_page()
-                    if (
-                        self.browser_config.get("stealth", False)
-                        and not context_stealth_ready
-                        and stealth_async is not None
-                    ):
-                        try:
-                            await stealth_async(page)
-                        except Exception as exc:  # pragma: no cover
-                            logger.warning("playwright-stealth 兼容模式应用失败: %s", exc)
-                    page_records = await self._crawl_pages(page, start_url)
-                    self.results.extend(page_records)
-                    await page.close()
+                    try:
+                        if (
+                            self.browser_config.get("stealth", False)
+                            and not context_stealth_ready
+                            and stealth_async is not None
+                        ):
+                            try:
+                                await stealth_async(page)
+                            except Exception as exc:  # pragma: no cover
+                                logger.warning("playwright-stealth 兼容模式应用失败: %s", exc)
+                        page_records = await self._crawl_pages(page, start_url)
+                        self.results.extend(page_records)
+                    finally:
+                        await _close_browser_resource(page, "browser page")
             finally:
-                await context.close()
-                await browser.close()
+                if context is not None:
+                    await _close_browser_resource(context, "browser context")
+                if browser is not None:
+                    await _close_browser_resource(browser, "browser")
 
         return self.results
 

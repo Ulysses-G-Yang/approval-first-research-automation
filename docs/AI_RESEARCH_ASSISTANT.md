@@ -91,8 +91,8 @@ python agent.py run "整理参考网页" --workflow web_to_markdown --url https:
 # 有 URL 时读取来源；没有 URL 时只搜索公开候选来源并生成来源清单
 python agent.py run "寻找公开研究资料" --workflow research_report
 
-# 开发者：复用现有 GenericSpider 配置，配置中不得包含 actions
-python agent.py run "采集站点列表" --workflow crawler_report --input configs/site.yaml
+# 开发者：使用审批模式专用的严格配置模板
+python agent.py run "采集站点列表" --workflow crawler_report --input configs/approved_browser_template.yaml
 
 # 将 DOCX、PDF、Markdown 或 TXT 转为 Markdown 与图片资产
 python agent.py run "整理文章资料" --workflow document_to_markdown --input article.docx
@@ -103,10 +103,12 @@ python agent.py run "准备草稿" --workflow content_save_draft --platform juej
 
 受控工具包括：
 
-- `web.fetch` 和 `web.search`：只允许公共 HTTP(S) 目标，拒绝 localhost、私有 IP、链路本地和保留网段。
+- `web.fetch` 和 `web.search`：只允许公共 HTTP(S) 目标，拒绝 localhost、私有 IP、链路本地和保留网段；重定向默认不能离开最初批准的主机，且不读取系统代理配置。
 - `url_list.read`：从明确传入的 TXT、Markdown、CSV 或 JSON 中提取公开 URL 候选项；读取列表不会自动访问其中每个页面。
 - `file.read`：只读取命令行中明确以 `--input` 指定的 Markdown、TXT、CSV、JSON 文件。
-- `browser.extract`：在审批边界内复用现有 `GenericSpider`，但第一版禁止 YAML `actions` 和明文 LLM Key。计划会读取该显式配置的 URL 列表以展示网络目标；若配置开启 selector LLM 修复，该步骤会提升为敏感步骤并显示对应 Provider。
+- `browser.extract`：在审批边界内复用现有 `GenericSpider`，但只接受严格白名单配置。Agent 模式禁止 YAML `actions`、`llm`、CDP、任意浏览器启动/context 参数、代理和浏览器状态文件；计划会展示所有批准的网络主机。运行时只放行这些主机 80/443 端口的公共 HTTP(S) GET/HEAD/OPTIONS 请求，关闭下载、WebSocket、service worker、QUIC 与非代理 WebRTC UDP，并限制请求数和总执行时间。Standalone `GenericSpider` 的受信任配置模式保持兼容，不属于这一审批安全边界。
+
+这些检查是应用层纵深防御，不是完整网络沙箱。域名校验和 Chromium/httpx 实际连接仍由不同组件完成，因此恶意 DNS 在检查后改变解析结果（DNS rebinding）的风险尚未由连接固定或受控 egress proxy 完全消除；在该问题解决前，不应在可访问敏感内网的高信任环境中把浏览器工具视为强隔离执行器。
 - `document.inspect` 与 `document.convert`：读取明确传入的 DOCX、PDF、Markdown、TXT，并在任务工作区生成 Markdown、转换清单和本地图片资产。文本型 PDF 会提取文字与内嵌图片；扫描页面会保留渲染图并标记 OCR 未执行。
 - `markdown.validate`：检查转换后 Markdown 的本地图片引用是否仍可复核。
 - `content.prepare_draft`：生成掘金、知乎或 CSDN 的离线草稿包；不打开浏览器、不读取 Cookie、不上传图片、不保存草稿、不发布。

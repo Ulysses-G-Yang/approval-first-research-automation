@@ -56,9 +56,9 @@ crawler.
 | Local CSV/JSON/TXT/Markdown reports | Tested | Reads only files explicitly supplied with `--input`. |
 | DOCX and text-PDF conversion | Tested | Scanned pages are preserved for review; OCR is not performed. |
 | Offline draft packages | Tested | Produces local files only; no login, upload, save, or publication. |
-| Public HTTP page reading | Limited | Redirects are checked, but connection-time DNS enforcement is tracked in #6. |
+| Public HTTP page reading | Limited | Exact approved hosts and public DNS answers are checked per request/redirect; connection pinning and a network sandbox remain tracked in #6. |
 | Approval-bound execution and recovery | Limited | Fingerprints, process locks, crash recovery, and versioned artifacts are tested for current workspaces; legacy workspaces are view/export-only, and interrupted remote/model calls require review. |
-| Reviewed browser extraction | Limited | The assistant accepts a narrower crawler configuration than standalone `GenericSpider`; package and browser-network gates are tracked in #3 and #6. |
+| Reviewed browser extraction | Limited | Agent mode has a strict config and subrequest policy; standalone trusted configuration and network-layer isolation remain outside this boundary. |
 | OCR | Planned | No OCR is currently performed. |
 | Platform draft save or formal publish | Planned | Requires a reviewed adapter and a separate sensitive approval. |
 
