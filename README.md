@@ -43,7 +43,7 @@ access-control bypass, undetectable automation, or guaranteed selector healing.
 | Optional assistant | Local CSV/JSON/TXT/Markdown reports | **Tested** | Reproducible offline workflows. |
 | Optional assistant | DOCX and text-PDF to Markdown | **Tested** | Scanned pages are preserved; OCR is not included. |
 | Optional assistant | Approval-bound execution and recovery | **Limited** | Fingerprints, process locks, crash recovery, and versioned artifacts are tested for current workspaces; legacy workspaces are view/export-only, and interrupted remote or model calls require review. |
-| Optional assistant | Public HTTP and reviewed browser access | **Limited** | Connection-time network hardening is tracked in [#6](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/6). |
+| Optional assistant | Public HTTP and reviewed browser access | **Limited** | Exact hosts, public DNS, methods, request counts, and run time are checked; connection pinning, aggregate browser bytes, and a network sandbox remain tracked in [#6](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/6). |
 | Optional assistant | Offline draft packages | **Tested** | Creates local files only; never uploads or publishes. |
 
 The detailed truth table is in [Product Scope](docs/PRODUCT_SCOPE.md), and the
@@ -181,6 +181,12 @@ See [Workflow Authoring](docs/WORKFLOW_AUTHORING.md) and the
 - Draft tools create local packages; no built-in tool logs in, uploads, saves a
   platform draft, or publishes content.
 
+Assistant-mode web tools add strict crawler configuration, approved-host checks,
+and browser request interception as application-layer defense in depth. This is
+not a complete network sandbox; DNS rebinding remains tracked in
+[Security Policy](SECURITY.md). Direct trusted-config `GenericSpider` runs are
+outside this approval boundary.
+
 See [Security Policy](SECURITY.md) for responsible reporting.
 
 ## Project layout
@@ -227,12 +233,6 @@ The repository began as an educational Taobao extraction project. The active
 line generalizes the crawler engine and keeps the single-site material as an
 immutable historical example, not a production claim. See
 [Educational Version](docs/EDUCATIONAL_VERSION.md).
-
-Assistant-mode web tools add strict crawler configuration, approved-host checks,
-and browser request interception as application-layer defense in depth. This is
-not a complete network sandbox; DNS rebinding remains tracked in
-[Security Policy](SECURITY.md). Standalone `GenericSpider` legacy configuration
-is outside this approval boundary.
 
 ## License
 

@@ -39,7 +39,7 @@
 | 可选助手 | 本地 CSV/JSON/TXT/Markdown 报告 | **已测试** | 有可重复的离线工作流。 |
 | 可选助手 | DOCX、文本型 PDF 转 Markdown | **已测试** | 扫描页会保留，但不做 OCR。 |
 | 可选助手 | 审批绑定执行与恢复 | **有限可用** | 当前任务空间已测试指纹、进程锁、异常恢复和版本化产物；旧任务空间只能查看/导出，中断的远程或模型调用必须人工复核。 |
-| 可选助手 | 公开 HTTP 与受审查浏览器访问 | **有限可用** | 连接阶段网络加固见 [#6](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/6)。 |
+| 可选助手 | 公开 HTTP 与受审查浏览器访问 | **有限可用** | 已检查精确主机、公开 DNS、方法、请求数和运行时间；连接固定、浏览器总字节计量及网络沙箱仍见 [#6](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/6)。 |
 | 可选助手 | 离线内容草稿包 | **已测试** | 只创建本地文件，不上传、不发布。 |
 
 完整能力边界见[产品范围](docs/PRODUCT_SCOPE.md)，实施顺序见唯一权威
@@ -171,6 +171,11 @@ agent resume <TASK_ID>
 - Assistant 使用的 Crawler YAML 会拒绝脚本动作和明文 API Key。
 - 草稿工具只生成本地文件；内置工具不会登录、上传、保存平台草稿或发布。
 
+审批模式的网页工具通过严格 Crawler 配置、批准主机检查和浏览器请求拦截提供应用层
+纵深防御，但它不是完整的网络沙箱；DNS rebinding 残余风险见
+[Security Policy](SECURITY.md)。直接使用受信任配置运行 `GenericSpider` 不属于这条
+审批安全边界。
+
 安全问题报告方式见 [Security Policy](SECURITY.md)。
 
 ## 项目结构
@@ -215,10 +220,6 @@ git diff --check
 仓库最初是淘宝数据采集教学项目。当前产品线把采集引擎泛化，早期单站点内容作为
 不可变历史示例保留，不代表生产级能力。详见
 [教育版本说明](docs/EDUCATIONAL_VERSION.md)。
-
-审批模式的网页工具通过严格 Crawler 配置、批准主机检查和浏览器请求拦截提供应用层纵深防御，
-但它不是完整的网络沙箱；DNS rebinding 残余风险见 [Security Policy](SECURITY.md)。
-Standalone `GenericSpider` 的旧配置兼容模式不属于这条审批安全边界。
 
 ## 许可证
 

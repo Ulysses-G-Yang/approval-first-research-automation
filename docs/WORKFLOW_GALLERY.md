@@ -66,8 +66,8 @@ The assistant accepts only the documented browser, request, pagination, field,
 and network keys. It rejects actions, all crawler-side LLM configuration, CDP,
 custom executables, launch/context overrides, proxies, storage state, downloads,
 recording paths, and permissions. Additional CDN hosts must be listed exactly in
-`network.allowed_hosts`; only ports 80 and 443 are accepted. The original
-standalone crawler remains available for authorized engineering experiments,
+`network.allowed_hosts`; only ports 80 and 443 are accepted. The standalone
+crawler remains the primary trusted-configuration surface,
 but it is outside this approval boundary.
 
 ## 6. Page Evolution Lab
