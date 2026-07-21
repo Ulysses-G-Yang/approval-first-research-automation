@@ -52,6 +52,6 @@ jobs:
               raise SystemExit(f"Expected exactly one wheel, found: {wheels}")
           subprocess.check_call([sys.executable, "-m", "pip", "install", wheels[0]])
       - run: python -m pip check
-      - name: Smoke test the installed distribution outside the checkout
+      - name: Smoke test the installed crawler and optional agent outside the checkout
         working-directory: ${{ runner.temp }}
         run: python "${{ github.workspace }}/scripts/package_smoke.py"

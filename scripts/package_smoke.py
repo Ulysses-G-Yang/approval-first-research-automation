@@ -44,11 +44,32 @@ def main() -> int:
     import core.spider_engine
     import research_assistant
     import workflows
+    from core.spider_engine import GenericSpider
     from research_assistant.workflows import available_workflows
 
     checkout = os.environ.get("GITHUB_WORKSPACE")
-    if checkout and Path(checkout).resolve() in Path(research_assistant.__file__).resolve().parents:
-        raise RuntimeError("Smoke test imported research_assistant from the source checkout, not the installed wheel.")
+    if checkout:
+        checkout_root = Path(checkout).resolve()
+        for module in (core.spider_engine, research_assistant):
+            if checkout_root in Path(module.__file__).resolve().parents:
+                raise RuntimeError(
+                    f"Smoke test imported {module.__name__} from the source checkout, not the installed wheel."
+                )
+
+    crawler = GenericSpider(
+        {
+            "name": "installed-crawler-smoke",
+            "start_url": "https://example.com/",
+            "browser": {"headless": True},
+            "fields": [{"name": "title", "selector": "h1"}],
+        }
+    )
+    if (
+        crawler.name != "installed-crawler-smoke"
+        or crawler.start_urls != ["https://example.com/"]
+        or crawler.results != []
+    ):
+        raise RuntimeError("Installed GenericSpider did not preserve its minimal configuration.")
 
     metadata_version = version("generic-crawler-research-assistant")
     if metadata_version != EXPECTED_VERSION or research_assistant.__version__ != EXPECTED_VERSION:
@@ -105,7 +126,8 @@ def main() -> int:
 
     print(
         "Installed distribution smoke test passed: "
-        f"{research_assistant.__version__}; packages={adapters.__name__},{core.spider_engine.__name__},{workflows.__name__}"
+        f"{research_assistant.__version__}; primary={crawler.__class__.__name__}; "
+        f"optional={research_assistant.__name__}; packages={adapters.__name__},{workflows.__name__}"
     )
     return 0
 
