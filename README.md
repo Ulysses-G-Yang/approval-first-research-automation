@@ -1,7 +1,9 @@
-# Approval-First Research Automation
+# Generic Configurable Crawler
 
-> A local-first toolkit for planning, approving, executing, and tracing research
-> workflows over explicit public web pages and user-supplied local files.
+> A source-checkout-first, YAML-configured Playwright crawler for public pages
+> you are permitted to access, with local JSON, JSONL, and CSV output. An
+> approval-first research assistant is included as an optional orchestration
+> layer.
 
 [![CI](https://github.com/Ulysses-G-Yang/approval-first-research-automation/actions/workflows/ci.yml/badge.svg)](https://github.com/Ulysses-G-Yang/approval-first-research-automation/actions/workflows/ci.yml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
@@ -13,42 +15,41 @@
 > self-healing and platform-adapter modules are experimental, and the latest
 > published release remains `v2.0.1`.
 
-![Product preview](docs/assets/product-preview.png)
+## What this project is
 
-## Why this project exists
+The primary product is `GenericSpider`: a configurable crawler that turns a
+trusted YAML definition into structured local records. A configuration can
+declare authorized start URLs, browser settings, pagination, page or item
+selectors, and output fields without hard-coding one site into the engine.
 
-Research automation often forces a poor choice between manual repetition and an
-agent that can act without a clear review boundary. This project keeps planning
-and execution separate:
+The repository also contains an optional approval-first assistant. It can wrap
+the crawler and local document tools in reviewed, traceable workflows, but it is
+not required to run the crawler directly.
 
-1. A deterministic workflow or configured model proposes a plan.
-2. The user reviews one explicit step.
-3. Only that approved next step may execute.
-4. Results, source information, approvals, and logs stay in one local workspace.
-
-The crawler is one controlled tool in this workflow. The project does not claim
-unrestricted browser autonomy, anti-bot bypass, or compatibility with arbitrary
-websites.
+The project does not claim compatibility with arbitrary websites, anti-bot or
+access-control bypass, undetectable automation, or guaranteed selector healing.
 
 ## Current capability status
 
-| Capability | Status | Notes |
-| --- | --- | --- |
-| Local CSV/JSON/TXT/Markdown reports | **Tested** | Reproducible offline tests. |
-| DOCX and text-PDF to Markdown | **Tested** | Scanned pages are preserved; OCR is not included. |
-| Offline draft packages | **Tested** | Creates local files only; never uploads or publishes. |
-| Public HTTP research | **Limited** | Public-target checks exist; connection-time network hardening is tracked in [#6](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/6). |
-| Approval checkpoints and audit files | **Limited** | Exact-content binding and recovery are tracked in [#4](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/4) and [#5](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/5). |
-| Configurable browser extraction | **Limited** | Package and browser-network gates are tracked in [#3](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/3) and [#6](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/6). |
-| Page Evolution Lab | **Tested** | Local fixture, not a site-coverage benchmark. |
-| Five-layer healing, QualityGate, repair memory | **Experimental** | Modules exist but are not connected to the supported crawler path. |
-| E-commerce adapter and domain matching | **Experimental** | Template code, not verified support for 19 sites. |
-| OCR and reviewed platform draft saving | **Planned** | Not currently offered. |
+| Layer | Capability | Status | Current boundary |
+| --- | --- | --- | --- |
+| Core crawler | YAML-configured Playwright extraction | **Limited** | The source-checkout path works; installed-package coverage is tracked in [#3](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/3), and real-site coverage is not benchmarked. |
+| Core crawler | Configured CSS field extraction | **Tested** | Reproducible local HTML fixtures cover successful and failed selectors. |
+| Core crawler | Pagination and JSON/JSONL/CSV output | **Limited** | Implemented, but there is no published cross-site compatibility benchmark. |
+| Core crawler | Scrapling adaptive fallback | **Limited** | Exercised by local fixtures; no recovery-rate claim is made. |
+| Core crawler | Page Evolution Lab | **Tested** | Deterministic local fixture, not a target-site benchmark. |
+| Core crawler | Five-layer healing, QualityGate, repair memory | **Experimental** | Prototype modules are not connected to the supported `GenericSpider` path. |
+| Core crawler | E-commerce adapter and domain matching | **Experimental** | One template with candidate domain strings, not verified support for 19 sites. |
+| Optional assistant | Local CSV/JSON/TXT/Markdown reports | **Tested** | Reproducible offline workflows. |
+| Optional assistant | DOCX and text-PDF to Markdown | **Tested** | Scanned pages are preserved; OCR is not included. |
+| Optional assistant | Approval checkpoints and audit files | **Limited** | Exact-content binding and recovery are tracked in [#4](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/4) and [#5](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/5). |
+| Optional assistant | Public HTTP and reviewed browser access | **Limited** | Connection-time network hardening is tracked in [#6](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/6). |
+| Optional assistant | Offline draft packages | **Tested** | Creates local files only; never uploads or publishes. |
 
 The detailed truth table is in [Product Scope](docs/PRODUCT_SCOPE.md), and the
 ordered work is in the canonical [Roadmap](ROADMAP.md).
 
-## Install from a source checkout
+## Run the crawler from a source checkout
 
 Python 3.12 is the currently tested runtime.
 
@@ -56,11 +57,7 @@ Python 3.12 is the currently tested runtime.
 git clone https://github.com/Ulysses-G-Yang/approval-first-research-automation.git
 cd approval-first-research-automation
 python -m venv .venv
-```
 
-Activate the environment and install the project:
-
-```bash
 # Windows PowerShell
 .venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
@@ -72,30 +69,69 @@ python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
-Browser workflows also require a browser binary:
+Install Chromium for browser extraction:
 
 ```bash
 playwright install chromium
-agent doctor
-agent list-workflows
 ```
 
-Until [#3](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/3)
-is closed, use a source checkout for crawler development; the current wheel does
-not yet prove the full crawler package surface.
+Create a trusted `crawler.yaml` for a public page you are allowed to access:
 
-## Run an offline workflow
+```yaml
+name: public-page-example
+start_url: https://example.com/
+browser:
+  headless: true
+request:
+  wait_until: domcontentloaded
+pagination:
+  enabled: false
+fields:
+  - name: title
+    selector: h1
+  - name: url
+    source: page_url
+    scope: page
+```
 
-Create a task plan from the bundled CSV example:
+Run the primary crawler entry point:
 
 ```bash
+python extract_prices.py \
+  --config crawler.yaml \
+  --output output/records.json
+```
+
+Direct crawler configurations are trusted code-like input: the standalone
+surface supports browser launch/context options and optional JavaScript actions.
+Use only configurations you control and targets you are authorized to access.
+
+For a fully offline check of selector evolution paths:
+
+```bash
+python -m labs.page_evolution.run_lab --json
+```
+
+The lab never launches a browser or accesses a third-party site. It is a
+regression fixture, not evidence of broad website support.
+
+## Optional approval-first assistant
+
+![Optional assistant preview](docs/assets/product-preview.png)
+
+The optional `agent` command adds reviewed steps, local task workspaces,
+artifacts, and audit information around crawler, web, file, and document tools.
+
+```bash
+agent doctor
+agent list-workflows
 agent run "Summarize the market notes" \
   --workflow file_report \
   --input examples/research-report/market-notes.csv
 ```
 
-The command prints a task ID and the first proposed step. Review it, then execute
-one step at a time:
+The command prints a task ID and the first proposed step. Review and execute one
+step at a time:
 
 ```bash
 agent status <TASK_ID>
@@ -103,71 +139,75 @@ agent approve <TASK_ID> step-01
 agent resume <TASK_ID>
 ```
 
-Repeat `status`, `approve`, and `resume` until the task completes. Export the
-local workspace when it is ready for review:
-
-```bash
-agent export <TASK_ID> --output task-export.zip
-```
-
-No model provider is required for the deterministic fallback. Provider setup and
+No model provider is required for deterministic workflows. Provider setup and
 model-assisted planning are documented in
 [AI Research Assistant](docs/AI_RESEARCH_ASSISTANT.md).
 
-## Supported workflows
+### Optional assistant workflows
 
 | Workflow | Purpose |
 | --- | --- |
+| `crawler_report` | Run a reviewed crawler YAML and compose a local report. |
 | `file_report` | Build a traceable report from explicit local inputs. |
 | `research_report` | Combine approved public URLs and local sources. |
 | `web_to_markdown` | Create a Markdown knowledge package from approved sources. |
 | `document_to_markdown` | Convert DOCX, text PDF, Markdown, or text documents. |
 | `content_save_draft` | Prepare an offline platform-specific draft package. |
-| `crawler_report` | Run a reviewed crawler YAML and compose a local report. |
 
 See [Workflow Authoring](docs/WORKFLOW_AUTHORING.md) and the
 [Example Gallery](examples/README.md) for inputs and expected artifacts.
 
-## Safety boundary
+## Safety boundaries
+
+### Direct crawler
+
+- Runs a user-supplied, trusted YAML configuration without per-step approval.
+- May use explicitly configured browser options and JavaScript actions.
+- Must be used only on pages the operator is authorized to access.
+- Is not a network sandbox and does not promise access-control or anti-bot bypass.
+
+### Optional assistant
 
 - A model may propose only registered tools and declared arguments.
-- A tool may read only URLs or local files included in the task.
+- Tools may read only URLs or local files included in the task.
 - Credentials are referenced from the operating-system credential store, not
-  embedded in workflow or crawler YAML.
+  embedded in workflow or assistant crawler YAML.
 - Assistant crawler YAML rejects scripted actions and plaintext API keys.
 - Draft tools create local packages; no built-in tool logs in, uploads, saves a
   platform draft, or publishes content.
-- Known approval, recovery, packaging, and browser-network gaps are public in the
-  roadmap instead of being described as completed capabilities.
 
 See [Security Policy](SECURITY.md) for responsible reporting.
 
 ## Project layout
 
 ```text
-research_assistant/   planner, approval runner, tools, providers, workspace
-workflows/            versioned declarative workflows
-core/                 crawler engine and experimental extraction modules
-adapters/             experimental adapter interfaces and templates
-labs/                 local page-evolution fixtures
-examples/             reproducible offline examples
-tests/                offline unit and workflow tests
+core/spider_engine.py   primary GenericSpider engine
+extract_prices.py       source-checkout crawler CLI
+configs/                crawler configuration templates
+labs/                   local page-evolution fixtures
+adapters/               experimental adapter interfaces and templates
+research_assistant/     optional planner, approval runner, tools, providers
+workflows/              optional versioned assistant workflows
+examples/               reproducible offline examples
+tests/                  crawler and workflow tests
 ```
 
-The supported browser path is currently:
+The two supported layers are separate:
 
 ```text
-crawler_report -> browser.extract -> GenericSpider
+trusted YAML -> extract_prices.py -> GenericSpider -> JSON/JSONL/CSV
+
+reviewed task -> agent crawler_report -> browser.extract -> GenericSpider
 ```
 
 The five-layer `SelfHealingEngine`, `QualityGate`, `RepairPersistence`, and
-adapter prototypes are not yet part of that path.
+adapter prototypes are not yet part of the primary crawler path.
 
 ## Development
 
 ```bash
 python -m unittest discover -s tests -v
-python -m compileall -q extract_prices.py agent.py core adapters research_assistant scripts labs
+python -m compileall -q extract_prices.py agent.py core adapters research_assistant workflows scripts labs
 python -m labs.page_evolution.run_lab --json
 git diff --check
 ```
@@ -178,8 +218,9 @@ Contribution and release requirements are documented in
 
 ## Historical context
 
-The repository began as an educational Taobao extraction project. Historical
-tags remain available, but they are not the current product promise. See
+The repository began as an educational Taobao extraction project. The active
+line generalizes the crawler engine and keeps the single-site material as an
+immutable historical example, not a production claim. See
 [Educational Version](docs/EDUCATIONAL_VERSION.md).
 
 ## License
