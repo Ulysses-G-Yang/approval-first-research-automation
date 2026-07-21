@@ -32,7 +32,7 @@
 | Crawler 核心 | YAML 配置化 Playwright 采集 | **有限可用** | 源码路径可用；安装产物覆盖见 [#3](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/3)，没有真实网站覆盖率基准。 |
 | Crawler 核心 | 配置化 CSS 字段提取 | **已测试** | 本地 HTML 夹具覆盖选择器成功和失败。 |
 | Crawler 核心 | 分页及 JSON/JSONL/CSV 输出 | **有限可用** | 已实现，但没有公开的跨站兼容性基准。 |
-| Crawler 核心 | Scrapling 自适应回退 | **有限可用** | 本地夹具会走到该路径，但不承诺恢复成功率。 |
+| Crawler 核心 | 自适应回退控制路径 | **有限可用** | 由确定性替身覆盖；尚未对真实 Scrapling 恢复能力做基准验证。 |
 | Crawler 核心 | Page Evolution Lab | **已测试** | 确定性本地夹具，不代表目标网站兼容性。 |
 | Crawler 核心 | 五层自愈、QualityGate、修复记忆 | **实验性** | 原型模块尚未接入正式 `GenericSpider` 路径。 |
 | Crawler 核心 | 电商 Adapter 与域名匹配 | **实验性** | 只有一个模板和候选域名字符串，不代表已验证支持 19 个网站。 |
@@ -188,7 +188,7 @@ tests/                  Crawler 与工作流测试
 ```text
 受信任 YAML -> extract_prices.py -> GenericSpider -> JSON/JSONL/CSV
 
-受审查任务 -> agent crawler_report -> browser.extract -> GenericSpider
+受审查任务 -> agent run --workflow crawler_report -> browser.extract -> GenericSpider
 ```
 
 五层 `SelfHealingEngine`、`QualityGate`、`RepairPersistence` 和 Adapter 原型

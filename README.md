@@ -36,7 +36,7 @@ access-control bypass, undetectable automation, or guaranteed selector healing.
 | Core crawler | YAML-configured Playwright extraction | **Limited** | The source-checkout path works; installed-package coverage is tracked in [#3](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/3), and real-site coverage is not benchmarked. |
 | Core crawler | Configured CSS field extraction | **Tested** | Reproducible local HTML fixtures cover successful and failed selectors. |
 | Core crawler | Pagination and JSON/JSONL/CSV output | **Limited** | Implemented, but there is no published cross-site compatibility benchmark. |
-| Core crawler | Scrapling adaptive fallback | **Limited** | Exercised by local fixtures; no recovery-rate claim is made. |
+| Core crawler | Adaptive fallback control path | **Limited** | Covered with a deterministic stand-in; real Scrapling recovery is not benchmarked. |
 | Core crawler | Page Evolution Lab | **Tested** | Deterministic local fixture, not a target-site benchmark. |
 | Core crawler | Five-layer healing, QualityGate, repair memory | **Experimental** | Prototype modules are not connected to the supported `GenericSpider` path. |
 | Core crawler | E-commerce adapter and domain matching | **Experimental** | One template with candidate domain strings, not verified support for 19 sites. |
@@ -197,7 +197,7 @@ The two supported layers are separate:
 ```text
 trusted YAML -> extract_prices.py -> GenericSpider -> JSON/JSONL/CSV
 
-reviewed task -> agent crawler_report -> browser.extract -> GenericSpider
+reviewed task -> agent run --workflow crawler_report -> browser.extract -> GenericSpider
 ```
 
 The five-layer `SelfHealingEngine`, `QualityGate`, `RepairPersistence`, and

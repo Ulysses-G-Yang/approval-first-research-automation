@@ -13,7 +13,7 @@ until the release gates below are complete.
 - **Core distribution:** [#3](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/3) — build and smoke-test installable wheel and sdist artifacts, including the crawler engine.
 - **Optional assistant integrity:** [#4](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/4) — bind approvals to the exact execution manifest.
 - **Optional assistant integrity:** [#5](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/5) — prevent concurrent execution, recover interrupted tasks, and preserve immutable artifacts.
-- **Core plus assistant network boundary:** [#6](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/6) — make approved HTTP and browser access explicit while documenting the separate trusted-config boundary of standalone `GenericSpider`.
+- **Assistant network enforcement plus standalone boundary documentation:** [#6](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/6) — make approved HTTP and browser access explicit while documenting the separate trusted-config boundary of standalone `GenericSpider`.
 - **Release:** [#9](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/9) — add a gated release workflow after the foundation issues close.
 
 Every gate requires tests that exercise the installed package or a controlled

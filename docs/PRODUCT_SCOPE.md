@@ -42,7 +42,7 @@ crawler.
 | Configured CSS field extraction | Tested | Covered by local HTML fixtures for successful and failed selectors. |
 | Page/list extraction and pagination | Limited | Implemented, but not measured across a published target corpus. |
 | JSON, JSONL, and CSV output | Limited | Implemented by the source-checkout CLI; installed CLI behavior is not yet a release contract. |
-| Scrapling adaptive fallback | Limited | Local fixtures exercise the path; there is no published recovery-rate benchmark. |
+| Adaptive fallback control path | Limited | A deterministic stand-in exercises the control path; real Scrapling recovery is not benchmarked. |
 | Optional LLM selector repair | Experimental | Disabled by default and tested with controlled doubles, not a model-quality benchmark. |
 | Page Evolution Lab | Tested | A local regression fixture, not a target-site support claim. |
 | Five-layer self-healing pipeline | Experimental | Prototype modules are not connected to `GenericSpider`. |
@@ -92,5 +92,5 @@ crawler.
 
 - Existing historical tags remain immutable.
 - `v2.0.1` remains the latest release until every v2.1.0 gate in the canonical roadmap is complete.
-- A feature becomes **Tested** only after installation, supported-path, and regression evidence exists.
+- A **Tested** label must name the tested surface. Installed-package support is claimed only after installation and regression evidence exists.
 - Release tags, package versions, release notes, and GitHub assets must point to the same commit.
