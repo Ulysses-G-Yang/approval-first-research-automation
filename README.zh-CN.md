@@ -29,7 +29,7 @@
 
 | 层级 | 能力 | 状态 | 当前边界 |
 | --- | --- | --- | --- |
-| Crawler 核心 | YAML 配置化 Playwright 采集 | **有限可用** | 源码路径可用；安装产物覆盖见 [#3](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/3)，没有真实网站覆盖率基准。 |
+| Crawler 核心 | YAML 配置化 Playwright 采集 | **有限可用** | Windows/Linux wheel 测试会导入并配置 `GenericSpider`；尚未基准验证真实浏览器执行和网站覆盖率。 |
 | Crawler 核心 | 配置化 CSS 字段提取 | **已测试** | 本地 HTML 夹具覆盖选择器成功和失败。 |
 | Crawler 核心 | 分页及 JSON/JSONL/CSV 输出 | **有限可用** | 已实现，但没有公开的跨站兼容性基准。 |
 | Crawler 核心 | 自适应回退控制路径 | **有限可用** | 由确定性替身覆盖；尚未对真实 Scrapling 恢复能力做基准验证。 |
@@ -109,6 +109,10 @@ python -m labs.page_evolution.run_lab --json
 ```
 
 该实验不会启动浏览器或访问第三方网站。它只是回归夹具，不代表广泛网站支持。
+
+候选 wheel 包含 `core`、`adapters`、`research_assistant` 和内置 workflows。
+CI 会在 Windows、Linux 的仓库外安装并实例化 `GenericSpider`，但不会启动浏览器。
+`v2.1.0` 尚未发布，因此当前仍以源码目录作为安装入口。
 
 ## 可选的审批优先助手
 

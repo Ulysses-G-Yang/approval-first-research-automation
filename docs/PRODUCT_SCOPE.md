@@ -38,7 +38,7 @@ crawler.
 
 | Capability | Status | Current boundary |
 | --- | --- | --- |
-| `GenericSpider` with trusted YAML configuration | Limited | Runs from a source checkout; installed distribution coverage is tracked in #3. |
+| `GenericSpider` with trusted YAML configuration | Limited | Windows/Linux wheel tests import and configure the installed engine; browser execution and target compatibility are not benchmarked. |
 | Configured CSS field extraction | Tested | Covered by local HTML fixtures for successful and failed selectors. |
 | Page/list extraction and pagination | Limited | Implemented, but not measured across a published target corpus. |
 | JSON, JSONL, and CSV output | Limited | Implemented by the source-checkout CLI; installed CLI behavior is not yet a release contract. |

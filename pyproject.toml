@@ -4,8 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "generic-crawler-research-assistant"
-version = "2.1.0"
-description = "Approval-first research automation for public web pages and local files."
+dynamic = ["version"]
+description = "Configurable web crawler with optional approval-first research workflows."
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "playwright>=1.61,<2",
@@ -24,7 +25,10 @@ dependencies = [
 agent = "research_assistant.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["research_assistant*", "workflows"]
+include = ["research_assistant*", "core*", "adapters*", "workflows"]
 
 [tool.setuptools.package-data]
 workflows = ["*.yaml"]
+
+[tool.setuptools.dynamic]
+version = {attr = "research_assistant._version.__version__"}

@@ -33,7 +33,7 @@ access-control bypass, undetectable automation, or guaranteed selector healing.
 
 | Layer | Capability | Status | Current boundary |
 | --- | --- | --- | --- |
-| Core crawler | YAML-configured Playwright extraction | **Limited** | The source-checkout path works; installed-package coverage is tracked in [#3](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/3), and real-site coverage is not benchmarked. |
+| Core crawler | YAML-configured Playwright extraction | **Limited** | Windows/Linux wheel tests import and configure `GenericSpider`; browser execution and real-site coverage are not benchmarked. |
 | Core crawler | Configured CSS field extraction | **Tested** | Reproducible local HTML fixtures cover successful and failed selectors. |
 | Core crawler | Pagination and JSON/JSONL/CSV output | **Limited** | Implemented, but there is no published cross-site compatibility benchmark. |
 | Core crawler | Adaptive fallback control path | **Limited** | Covered with a deterministic stand-in; real Scrapling recovery is not benchmarked. |
@@ -114,6 +114,11 @@ python -m labs.page_evolution.run_lab --json
 
 The lab never launches a browser or accesses a third-party site. It is a
 regression fixture, not evidence of broad website support.
+
+The candidate wheel contains `core`, `adapters`, `research_assistant`, and the
+bundled workflows. CI installs it outside the checkout on Windows and Linux and
+instantiates `GenericSpider` without launching a browser. No `v2.1.0` package has
+been published, so this source checkout remains the installation path.
 
 ## Optional approval-first assistant
 
