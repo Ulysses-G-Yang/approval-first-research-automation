@@ -2,7 +2,7 @@
 
 ## 目标与边界
 
-本项目的研究助手面向两类使用者：开发者可以继续编写 YAML、Python 工具和可复用工作流；非开发者可以描述研究目标，让已配置的大模型生成一份可读、可批准的执行计划。当前版本覆盖公开网页、常见数据文件和 DOCX/PDF/Markdown 文档到可追溯 Markdown 产物的流程。
+本项目的可选研究助手面向两类使用者：开发者可以继续编写 YAML、Python 工具和可复用工作流；非开发者可以描述研究目标，让已配置的大模型生成一份可读、可批准的执行计划。它建立在主 `GenericSpider` 和本地工具之上；当前版本覆盖公开网页、常见数据文件和 DOCX/PDF/Markdown 文档到可追溯 Markdown 产物的流程。
 
 模型不拥有执行权限。它只能从注册表中选择工具，并说明为什么需要该步骤；任务执行器再根据用户的逐项批准调用工具。第一版没有任意 shell、任意 Python、页面 JavaScript、登录、私有网络或自动发布能力。DOCX、文本型 PDF、Markdown 和 TXT 的转换由受控工具完成，不会因此扩大模型权限。
 
@@ -124,11 +124,11 @@ plan.json          模型或内置工作流生成的受限工具计划
 approvals.jsonl    每次规划或步骤批准的审计记录
 run.jsonl          执行日志
 artifacts/         原始网页/文件、清洗数据、Markdown 表格和报告
-artifacts/report.md
-artifacts/sources.jsonl
-artifacts/documents/<bundle>/article.md
-artifacts/documents/<bundle>/assets/
-artifacts/drafts/<platform>/draft-manifest.json
+artifacts/versions/<attempt-id>/report.md
+artifacts/versions/<attempt-id>/sources.jsonl
+artifacts/versions/<attempt-id>/documents/<bundle>/article.md
+artifacts/versions/<attempt-id>/documents/<bundle>/assets/
+artifacts/versions/<attempt-id>/drafts/<platform>/draft-manifest.json
 ```
 
 报告保留来源 URL、抓取/读取时间、产物路径和原始结构化数据；无法访问的页面会在对应步骤中失败并留下错误状态，不会被伪装为成功。`agent export` 将整个任务目录压缩，以便共享或归档。

@@ -161,6 +161,7 @@ class WebFetchTool:
     risk: RiskLevel = RiskLevel.READ
     required_arguments: tuple[str, ...] = ("url",)
     allowed_arguments: tuple[str, ...] = ("url", "timeout_seconds")
+    recovery_strategy: str = "remote_read"
 
     async def run(self, context: ToolContext, arguments: Dict[str, Any]) -> ToolResult:
         url = validate_public_url(str(arguments["url"]))
@@ -204,6 +205,7 @@ class WebSearchTool:
     risk: RiskLevel = RiskLevel.READ
     required_arguments: tuple[str, ...] = ("query",)
     allowed_arguments: tuple[str, ...] = ("query", "limit")
+    recovery_strategy: str = "remote_read"
 
     async def run(self, context: ToolContext, arguments: Dict[str, Any]) -> ToolResult:
         query = str(arguments["query"]).strip()
@@ -250,6 +252,7 @@ class FileReadTool:
     risk: RiskLevel = RiskLevel.READ
     required_arguments: tuple[str, ...] = ("path",)
     allowed_arguments: tuple[str, ...] = ("path",)
+    recovery_strategy: str = "local_deterministic"
 
     async def run(self, context: ToolContext, arguments: Dict[str, Any]) -> ToolResult:
         path = context.resolve_input(str(arguments["path"]))
@@ -313,6 +316,7 @@ class UrlListReadTool:
     risk: RiskLevel = RiskLevel.READ
     required_arguments: tuple[str, ...] = ("path",)
     allowed_arguments: tuple[str, ...] = ("path", "max_urls")
+    recovery_strategy: str = "local_deterministic"
 
     async def run(self, context: ToolContext, arguments: Dict[str, Any]) -> ToolResult:
         path = context.resolve_input(str(arguments["path"]))
@@ -412,6 +416,7 @@ class DataNormalizeTool:
     risk: RiskLevel = RiskLevel.WRITE
     required_arguments: tuple[str, ...] = ()
     allowed_arguments: tuple[str, ...] = ()
+    recovery_strategy: str = "local_deterministic"
 
     async def run(self, context: ToolContext, arguments: Dict[str, Any]) -> ToolResult:
         source_artifacts = (
@@ -472,6 +477,7 @@ class MarkdownTableTool:
     risk: RiskLevel = RiskLevel.WRITE
     required_arguments: tuple[str, ...] = ()
     allowed_arguments: tuple[str, ...] = ("max_rows",)
+    recovery_strategy: str = "local_deterministic"
 
     async def run(self, context: ToolContext, arguments: Dict[str, Any]) -> ToolResult:
         datasets = context.artifacts("dataset")
@@ -609,6 +615,7 @@ class ReportSummarizeTool:
     risk: RiskLevel = RiskLevel.SENSITIVE
     required_arguments: tuple[str, ...] = ()
     allowed_arguments: tuple[str, ...] = ()
+    recovery_strategy: str = "model_call"
 
     async def run(self, context: ToolContext, arguments: Dict[str, Any]) -> ToolResult:
         datasets = context.artifacts("dataset")
@@ -639,6 +646,7 @@ class ReportComposeTool:
     risk: RiskLevel = RiskLevel.WRITE
     required_arguments: tuple[str, ...] = ()
     allowed_arguments: tuple[str, ...] = ()
+    recovery_strategy: str = "local_deterministic"
 
     async def run(self, context: ToolContext, arguments: Dict[str, Any]) -> ToolResult:
         datasets = context.artifacts("dataset")
@@ -677,6 +685,7 @@ class BrowserExtractTool:
     risk: RiskLevel = RiskLevel.READ
     required_arguments: tuple[str, ...] = ("config_path",)
     allowed_arguments: tuple[str, ...] = ("config_path",)
+    recovery_strategy: str = "remote_read"
 
     async def run(self, context: ToolContext, arguments: Dict[str, Any]) -> ToolResult:
         path = context.resolve_input(str(arguments["config_path"]))

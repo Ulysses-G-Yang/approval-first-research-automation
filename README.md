@@ -42,7 +42,7 @@ access-control bypass, undetectable automation, or guaranteed selector healing.
 | Core crawler | E-commerce adapter and domain matching | **Experimental** | One template with candidate domain strings, not verified support for 19 sites. |
 | Optional assistant | Local CSV/JSON/TXT/Markdown reports | **Tested** | Reproducible offline workflows. |
 | Optional assistant | DOCX and text-PDF to Markdown | **Tested** | Scanned pages are preserved; OCR is not included. |
-| Optional assistant | Approval checkpoints and audit files | **Limited** | Exact-content binding and recovery are tracked in [#4](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/4) and [#5](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/5). |
+| Optional assistant | Approval-bound execution and recovery | **Limited** | Fingerprints, process locks, crash recovery, and versioned artifacts are tested for current workspaces; legacy workspaces are view/export-only, and interrupted remote or model calls require review. |
 | Optional assistant | Public HTTP and reviewed browser access | **Limited** | Connection-time network hardening is tracked in [#6](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/6). |
 | Optional assistant | Offline draft packages | **Tested** | Creates local files only; never uploads or publishes. |
 

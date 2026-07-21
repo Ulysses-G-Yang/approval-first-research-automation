@@ -9,4 +9,4 @@ agent run "Convert the local document example" \
   --workspace-root .demo-tasks
 ```
 
-After the three approved steps, compare the task's `artifacts/documents/*/article.md` to [expected/article.md](expected/article.md). The generated file points to a copied task-local asset named `assets/image-001.svg`.
+After the three approved steps, use `agent status <TASK_ID>` to find the task's versioned `documents/*/article.md`, then compare it to [expected/article.md](expected/article.md). The generated file points to a copied task-local asset named `assets/image-001.svg`.

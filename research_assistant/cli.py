@@ -3,12 +3,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import getpass
+import hashlib
 import importlib
 import json
 import platform
 import sys
 from pathlib import Path
-from typing import Callable, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Optional
 
 from . import __version__
 from .models import TaskSpec
@@ -16,7 +17,7 @@ from .planner import AgentPlanner, PlanningError
 from .plugins import PluginError, load_plugins
 from .providers import ProviderError, create_provider
 from .registry import ToolError
-from .runner import ApprovalError, TaskRunner, approve_step
+from .runner import ApprovalError, TaskRunner, approve_step, preview_approval, recover_step
 from .secrets import KeyringSecretStore, SecretStoreError
 from .settings import AgentSettings, ProviderConfig, SettingsError, default_config_path, load_settings, save_settings
 from .tools import build_default_registry
@@ -36,6 +37,39 @@ def _load_registry(settings: AgentSettings):
     registry = build_default_registry()
     load_plugins(registry, settings.plugins)
     return registry
+
+
+def _module_source_manifest(module_name: str) -> Dict[str, Any]:
+    module = importlib.import_module(module_name)
+    module_path = Path(str(getattr(module, "__file__", ""))).resolve()
+    if not module_path.is_file():
+        return {"name": module_name, "sha256": "", "file_count": 0}
+    files = sorted(module_path.parent.rglob("*.py")) if module_path.name == "__init__.py" else [module_path]
+    digest = hashlib.sha256()
+    for path in files:
+        relative = str(path.relative_to(module_path.parent)).replace("\\", "/")
+        content = path.read_bytes()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(content).digest())
+    return {"name": module_name, "sha256": digest.hexdigest(), "file_count": len(files)}
+
+
+def _execution_environment(settings: AgentSettings, registry, provider_name: Optional[str]) -> Dict[str, Any]:
+    provider = settings.providers.get(provider_name or "")
+    provider_manifest: Dict[str, Any] = {}
+    if provider is not None:
+        provider_manifest = {"name": provider.name, **provider.to_dict()}
+    plugin_manifest = []
+    for module_name in sorted(settings.plugins):
+        plugin_manifest.append(_module_source_manifest(module_name))
+    return {
+        "agent_version": __version__,
+        "built_in_code": [_module_source_manifest(name) for name in ("research_assistant", "core", "adapters")],
+        "provider": provider_manifest,
+        "plugins": plugin_manifest,
+        "tools": registry.describe(),
+    }
 
 
 def _module_available(module_name: str) -> tuple[bool, str]:
@@ -124,20 +158,21 @@ def _format_arguments(arguments: dict) -> str:
 
 
 def _output_hint(tool_name: str) -> str:
+    prefix = "artifacts/versions/<attempt-id>/"
     return {
-        "web.fetch": "artifacts/web-*.json",
-        "web.search": "artifacts/search-*.json",
-        "file.read": "artifacts/file-*.json",
-        "url_list.read": "artifacts/url-list-*.json",
-        "browser.extract": "artifacts/crawl-*.json",
-        "document.inspect": "artifacts/documents/*/inspection.json",
-        "document.convert": "artifacts/documents/*/article.md and assets/",
-        "markdown.validate": "artifacts/documents/markdown-validation.json",
-        "content.prepare_draft": "artifacts/drafts/<platform>/",
-        "data.normalize": "artifacts/normalized-dataset.json",
-        "data.to_markdown": "artifacts/dataset-table.md",
-        "report.summarize": "artifacts/model-summary.md",
-        "report.compose": "artifacts/report.md and artifacts/sources.jsonl",
+        "web.fetch": prefix + "web-*.json",
+        "web.search": prefix + "search-*.json",
+        "file.read": prefix + "file-*.json",
+        "url_list.read": prefix + "url-list-*.json",
+        "browser.extract": prefix + "crawl-*.json",
+        "document.inspect": prefix + "documents/*/inspection.json",
+        "document.convert": prefix + "documents/*/article.md and assets/",
+        "markdown.validate": prefix + "documents/markdown-validation.json",
+        "content.prepare_draft": prefix + "drafts/<platform>/",
+        "data.normalize": prefix + "normalized-dataset.json",
+        "data.to_markdown": prefix + "dataset-table.md",
+        "report.summarize": prefix + "model-summary.md",
+        "report.compose": prefix + "report.md and sources.jsonl",
     }.get(tool_name, "task workspace artifacts")
 
 
@@ -240,6 +275,7 @@ async def _run_command(args: argparse.Namespace) -> int:
         print(f"Plan creation failed. Task workspace retained for audit: {workspace.root}", file=sys.stderr)
         raise
 
+    plan.metadata["execution_environment"] = _execution_environment(settings, registry, provider_name)
     task.summary = plan.summary
     from .models import TaskStatus
 
@@ -286,9 +322,36 @@ def _command_configure_provider(args: argparse.Namespace) -> int:
 
 
 def _command_approve(args: argparse.Namespace) -> int:
+    settings = load_settings(_config_path(args.config))
+    registry = _load_registry(settings)
     workspace = TaskWorkspace.open(_workspace_root(args.workspace_root), args.task_id)
-    step = approve_step(workspace, args.step_id)
+    task = workspace.load_task()
+    environment = _execution_environment(settings, registry, task.provider_name)
+    preview_step, _manifest, preview_fingerprint = preview_approval(
+        workspace,
+        args.step_id,
+        environment,
+    )
+    print(f"Step: {preview_step.id} {preview_step.call.tool_name} ({preview_step.call.risk.value})")
+    print(f"Target: {preview_step.call.target or '(local task workspace)'}")
+    print(f"Arguments: {json.dumps(preview_step.call.arguments, ensure_ascii=False, sort_keys=True)}")
+    print(f"Fingerprint: {preview_fingerprint}")
+    if not args.yes:
+        try:
+            confirmed = input("Approve this exact execution manifest? [y/N]: ").strip().lower()
+        except EOFError:
+            confirmed = ""
+        if confirmed not in {"y", "yes"}:
+            print("Approval cancelled.")
+            return 1
+    step = approve_step(
+        workspace,
+        args.step_id,
+        environment,
+        expected_fingerprint=preview_fingerprint,
+    )
     print(f"Approved {step.id}: {step.call.tool_name} ({step.call.risk.value})")
+    print(f"Fingerprint: {step.approval_fingerprint}")
     print(f"Next: agent resume {args.task_id}")
     return 0
 
@@ -305,7 +368,12 @@ async def _resume_command(args: argparse.Namespace) -> int:
         except (SettingsError, SecretStoreError, ProviderError) as exc:
             workspace.append_log("provider_unavailable", {"provider": task.provider_name, "error": str(exc)})
             print("Warning: configured provider is unavailable; model-summary steps will use the local fallback.")
-    result = await TaskRunner(registry, provider=provider).resume(workspace)
+    environment = _execution_environment(settings, registry, task.provider_name)
+    result = await TaskRunner(
+        registry,
+        provider=provider,
+        execution_environment=environment,
+    ).resume(workspace)
     print(f"Task status: {result.task_status.value}")
     if result.executed_step_id:
         print(f"Executed: {result.executed_step_id}")
@@ -315,13 +383,26 @@ async def _resume_command(args: argparse.Namespace) -> int:
         next_step = next((step for step in plan.steps if step.status.value == "planned"), None)
         if next_step:
             print(f"Next: agent approve {task.id} {next_step.id}")
+    if result.task_status.value == "recovery_required":
+        return 2
+    return 0 if result.task_status.value != "failed" else 1
+
+
+def _command_recover(args: argparse.Namespace) -> int:
+    workspace = TaskWorkspace.open(_workspace_root(args.workspace_root), args.task_id)
+    result = recover_step(workspace, args.step_id, args.action)
+    print(f"Task status: {result.task_status.value}")
+    print(result.message)
+    if args.action == "retry":
+        print(f"Next: agent approve {args.task_id} {args.step_id} --yes")
     return 0 if result.task_status.value != "failed" else 1
 
 
 def _command_status(args: argparse.Namespace) -> int:
     workspace = TaskWorkspace.open(_workspace_root(args.workspace_root), args.task_id)
-    print_plan(workspace)
-    artifacts = workspace.list_artifacts()
+    with workspace.lock():
+        print_plan(workspace)
+        artifacts = workspace.list_artifacts()
     if artifacts:
         print("Artifacts:")
         for artifact in artifacts:
@@ -332,7 +413,8 @@ def _command_status(args: argparse.Namespace) -> int:
 def _command_export(args: argparse.Namespace) -> int:
     workspace = TaskWorkspace.open(_workspace_root(args.workspace_root), args.task_id)
     default_destination = Path.home() / "GenericCrawler" / "exports" / f"{args.task_id}.zip"
-    archive = workspace.export_archive(Path(args.output).expanduser() if args.output else default_destination)
+    with workspace.lock():
+        archive = workspace.export_archive(Path(args.output).expanduser() if args.output else default_destination)
     print(f"Exported task archive: {archive}")
     return 0
 
@@ -407,7 +489,9 @@ def build_parser() -> argparse.ArgumentParser:
     approve = subparsers.add_parser("approve", help="Approve only the next planned step of a task.")
     approve.add_argument("task_id")
     approve.add_argument("step_id")
+    approve.add_argument("--yes", action="store_true", help="Approve without an interactive confirmation prompt.")
     approve.add_argument("--workspace-root", help="Override the default task workspace location.")
+    approve.add_argument("--config", help="Optional path for non-secret agent settings used in the fingerprint.")
     approve.set_defaults(handler=_command_approve)
 
     resume = subparsers.add_parser("resume", help="Execute the one approved next step of a task.")
@@ -415,6 +499,13 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--workspace-root", help="Override the default task workspace location.")
     resume.add_argument("--config", help="Optional path for non-secret agent settings.")
     resume.set_defaults(async_handler=_resume_command)
+
+    recover = subparsers.add_parser("recover", help="Resolve one interrupted step without silently re-running it.")
+    recover.add_argument("task_id")
+    recover.add_argument("step_id")
+    recover.add_argument("--action", required=True, choices=["finalize", "retry", "fail"])
+    recover.add_argument("--workspace-root", help="Override the default task workspace location.")
+    recover.set_defaults(handler=_command_recover)
 
     status = subparsers.add_parser("status", help="Show task plan, approvals, and artifacts.")
     status.add_argument("task_id")

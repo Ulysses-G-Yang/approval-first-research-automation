@@ -38,7 +38,7 @@
 | Crawler 核心 | 电商 Adapter 与域名匹配 | **实验性** | 只有一个模板和候选域名字符串，不代表已验证支持 19 个网站。 |
 | 可选助手 | 本地 CSV/JSON/TXT/Markdown 报告 | **已测试** | 有可重复的离线工作流。 |
 | 可选助手 | DOCX、文本型 PDF 转 Markdown | **已测试** | 扫描页会保留，但不做 OCR。 |
-| 可选助手 | 审批检查点与审计文件 | **有限可用** | 精确内容绑定和异常恢复见 [#4](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/4)、[#5](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/5)。 |
+| 可选助手 | 审批绑定执行与恢复 | **有限可用** | 当前任务空间已测试指纹、进程锁、异常恢复和版本化产物；旧任务空间只能查看/导出，中断的远程或模型调用必须人工复核。 |
 | 可选助手 | 公开 HTTP 与受审查浏览器访问 | **有限可用** | 连接阶段网络加固见 [#6](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/6)。 |
 | 可选助手 | 离线内容草稿包 | **已测试** | 只创建本地文件，不上传、不发布。 |
 

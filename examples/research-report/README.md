@@ -9,4 +9,4 @@ agent run "Summarize the example market notes" \
   --workspace-root .demo-tasks
 ```
 
-Approve the steps in order. The final task workspace contains `artifacts/report.md`, `artifacts/sources.jsonl`, the normalized dataset, its plan, and approvals.
+Approve the steps in order. The final task workspace contains versioned `report.md`, `sources.jsonl`, and normalized-dataset artifacts under `artifacts/versions/<attempt-id>/`, plus its plan and approvals. Use `agent status <TASK_ID>` for their exact paths.
