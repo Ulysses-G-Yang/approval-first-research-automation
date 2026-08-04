@@ -1,0 +1,6 @@
+{
+  "snapshots": [
+    {"after_ms": 0, "selectors": {}},
+    {"after_ms": 150, "selectors": {"[data-field='title']": "Northwind notebook"}}
+  ]
+}

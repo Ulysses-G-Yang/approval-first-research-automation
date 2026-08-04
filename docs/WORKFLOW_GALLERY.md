@@ -70,6 +70,15 @@ recording paths, and permissions. Additional CDN hosts must be listed exactly in
 crawler remains the primary trusted-configuration surface,
 but it is outside this approval boundary.
 
-## 6. Page Evolution Lab
+## 6. JS Evolution Benchmark
 
-The [local lab](../labs/page_evolution/README.md) simulates selector drift and versioned page-state changes without visiting a real website. It is the recommended way to demonstrate the extraction recovery path.
+The [JS evolution corpus](../labs/js_evolution/README.md) covers selector drift,
+embedded JSON, passive network JSON, delayed hydration, invalid candidates, and
+an irrecoverable negative case without visiting a real website. The supported
+release gate is:
+
+```bash
+crawler benchmark --json --check-baseline
+```
+
+The older Page Evolution Lab remains historical teaching material only.

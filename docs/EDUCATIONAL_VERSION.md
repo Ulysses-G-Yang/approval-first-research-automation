@@ -10,7 +10,10 @@
 
 `v1.0-educational` 是早期单站点实验的历史归档，不是当前产品线，也不是生产采集器。它保留的价值在于讨论动态页面状态、selector 漂移、配置迁移与失败处理。
 
-归档中的代码不是通用的“热更新 JS 架构”，更不代表任何平台的当前兼容性。当前主线使用本地 [页面演化靶场](../labs/page_evolution/README.md) 展示同类工程问题：用自建 HTML 夹具复现结构变化，再观察受限的适配与候选方案流程。整个演示不访问第三方网站。
+归档中的代码不是通用的“热更新 JS 架构”，更不代表任何平台的当前兼容性。
+当前主线使用本地 [JS Evolution Benchmark](../labs/js_evolution/README.md)
+展示同类工程问题：用自建夹具复现 DOM、内嵌 JSON、网络 JSON 和 hydration
+变化，再验证受限的候选流程。整个演示不访问第三方网站。
 
 ## What it demonstrates
 
@@ -20,14 +23,19 @@ It does **not** provide a generalized "hot-update JavaScript architecture." The 
 
 ## The modern, safe teaching path
 
-The active branch separates reusable execution behavior from configuration and task approval. For a reproducible demonstration, use the [Page Evolution Lab](../labs/page_evolution/README.md):
+The active branch separates reusable execution behavior from configuration and
+task approval. For a reproducible demonstration, run
+`crawler benchmark --json --check-baseline` against the
+[JS evolution corpus](../labs/js_evolution/README.md):
 
 1. Run local HTML fixtures representing page versions.
 2. Observe a configured selector succeed, then drift.
-3. Observe the bounded adaptive and mocked selector-suggestion paths.
-4. Review the result without contacting a third-party site.
+3. Observe fallback, approved-history, adaptive, and controlled candidate paths.
+4. Confirm invalid candidates are rejected and irrecoverable cases stay failed.
+5. Review deterministic Episode and artifact identities without contacting a third-party site.
 
-The lab intentionally uses synthetic content. It is a compatibility exercise, not a target-site exercise.
+The old `labs/page_evolution` demo remains available as historical teaching
+material; it is not the v2.1 release benchmark.
 
 ## Boundaries
 

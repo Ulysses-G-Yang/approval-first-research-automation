@@ -109,6 +109,16 @@ class CrawlerCliTests(unittest.TestCase):
                 )
             self.assertEqual(result, 1)
 
+    def test_default_installed_benchmark_runner_meets_baseline(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = main(["benchmark", "--json", "--check-baseline"])
+        payload = json.loads(output.getvalue())
+        self.assertEqual(result, 0)
+        self.assertTrue(payload["passed"], payload["baseline_failures"])
+        self.assertEqual(payload["metrics"]["external_network_calls"], 0)
+        self.assertEqual(payload["metrics"]["real_model_calls"], 0)
+
     def test_run_store_is_opt_in_and_injected_without_breaking_old_factories(self) -> None:
         with TemporaryDirectory() as temp:
             root = Path(temp)

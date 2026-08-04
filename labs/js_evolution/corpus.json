@@ -1,0 +1,130 @@
+{
+  "schema_version": "1.0",
+  "corpus_id": "js-evolution-v1",
+  "authorization": "synthetic-local",
+  "cases": [
+    {
+      "id": "stable-dom-selector",
+      "kind": "dom",
+      "category": "normal",
+      "fixture": "fixtures/stable_dom.html",
+      "field": {
+        "name": "title",
+        "selector": ".product-title",
+        "validation": {
+          "non_empty": {},
+          "enum": {"values": ["Northwind notebook"]}
+        }
+      },
+      "expected_value": "Northwind notebook",
+      "expected_stage": "configured"
+    },
+    {
+      "id": "fallback-after-class-drift",
+      "kind": "dom",
+      "category": "recoverable",
+      "fixture": "fixtures/fallback_drift.html",
+      "field": {
+        "name": "title",
+        "selector": ".product-title",
+        "fallback_selectors": ["[data-field='title']"],
+        "validation": {
+          "non_empty": {},
+          "enum": {"values": ["Northwind notebook"]}
+        }
+      },
+      "expected_value": "Northwind notebook",
+      "expected_stage": "fallback"
+    },
+    {
+      "id": "embedded-json-location-and-path-drift",
+      "kind": "embedded_json",
+      "category": "recoverable",
+      "fixture": "fixtures/embedded_json_drift.html",
+      "original_capture": {
+        "selector": "#bootstrap-v1",
+        "source": "payload.items.0.title",
+        "max_bytes": 4096
+      },
+      "repair_capture": {
+        "selector": "script[data-capture='catalog']",
+        "source": "bootstrap.props.items.0.title",
+        "max_bytes": 4096
+      },
+      "validation": {
+        "non_empty": {},
+        "enum": {"values": ["Northwind notebook"]}
+      },
+      "expected_value": "Northwind notebook",
+      "expected_stage": "embedded_json_repair"
+    },
+    {
+      "id": "network-json-endpoint-and-schema-drift",
+      "kind": "network_json",
+      "category": "recoverable",
+      "fixture": "fixtures/network_json_drift.json",
+      "original_capture": {
+        "url_glob": "https://fixture.invalid/api/v1/items*",
+        "source": "data.0.title",
+        "max_bytes": 4096
+      },
+      "repair_capture": {
+        "url_glob": "https://fixture.invalid/api/v2/catalog*",
+        "source": "payload.products.0.name",
+        "max_bytes": 4096
+      },
+      "validation": {
+        "non_empty": {},
+        "enum": {"values": ["Northwind notebook"]}
+      },
+      "expected_value": "Northwind notebook",
+      "expected_stage": "network_json_repair"
+    },
+    {
+      "id": "delayed-hydration-wait-drift",
+      "kind": "hydration",
+      "category": "recoverable",
+      "fixture": "fixtures/hydration_drift.json",
+      "selector": "[data-field='title']",
+      "original_timeout_ms": 50,
+      "repair_timeout_ms": 250,
+      "validation": {
+        "non_empty": {},
+        "enum": {"values": ["Northwind notebook"]}
+      },
+      "expected_value": "Northwind notebook",
+      "expected_stage": "wait_condition_repair"
+    },
+    {
+      "id": "invalid-nonempty-candidate",
+      "kind": "dom",
+      "category": "invalid_candidate",
+      "fixture": "fixtures/invalid_candidate.html",
+      "field": {
+        "name": "title",
+        "selector": ".missing-title",
+        "validation": {
+          "non_empty": {},
+          "enum": {"values": ["Northwind notebook"]}
+        }
+      },
+      "fixture_candidate": ".promotion-label",
+      "expected_value": "",
+      "expected_stage": "quality_gate_rejected"
+    },
+    {
+      "id": "irrecoverable-missing-data",
+      "kind": "dom",
+      "category": "irrecoverable",
+      "fixture": "fixtures/irrecoverable.html",
+      "field": {
+        "name": "title",
+        "selector": ".missing-title",
+        "fallback_selectors": ["[data-field='title']"],
+        "validation": {"non_empty": {}}
+      },
+      "expected_value": "",
+      "expected_stage": "exhausted"
+    }
+  ]
+}

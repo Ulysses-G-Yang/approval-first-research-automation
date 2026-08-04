@@ -485,7 +485,7 @@ def main(
         if args.command == "run":
             return _command_run(args, spider_factory)
         if args.command == "benchmark":
-            return _command_benchmark(args, benchmark_runner)
+            return _command_benchmark(args, benchmark_runner or _default_benchmark_runner)
         if args.command == "episodes":
             return _command_episodes(args)
         parser.error(f"Unknown command: {args.command}")

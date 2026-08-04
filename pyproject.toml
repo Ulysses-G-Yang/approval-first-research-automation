@@ -25,10 +25,11 @@ agent = "research_assistant.cli:main"
 crawler = "core.crawler_cli:main"
 
 [tool.setuptools.packages.find]
-include = ["research_assistant*", "core*", "adapters*", "workflows"]
+include = ["research_assistant*", "core*", "adapters*", "workflows", "labs*"]
 
 [tool.setuptools.package-data]
 workflows = ["*.yaml"]
+"labs.js_evolution" = ["corpus.json", "README.md", "fixtures/*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "research_assistant._version.__version__"}
