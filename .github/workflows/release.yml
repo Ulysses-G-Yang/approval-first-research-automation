@@ -285,8 +285,17 @@ jobs:
           }
 
           release_id=""
+          release_url=""
+          find_draft_id() {
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq ".[] | select(.html_url == \"${release_url}\" and .tag_name == \"${RELEASE_TAG}\" and .draft == true) | .id"
+          }
           cleanup_draft() {
-            if [[ -z "${release_id}" ]]; then
+            if [[ -z "${release_id}" && -n "${release_url}" ]]; then
+              release_id="$(find_draft_id 2>/dev/null || true)"
+            fi
+            if [[ ! "${release_id}" =~ ^[0-9]+$ ]]; then
               return 0
             fi
             local current
@@ -325,17 +334,22 @@ jobs:
             exit 1
           fi
 
-          gh release create "${RELEASE_TAG}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --verify-tag \
-            --generate-notes \
-            --title "${RELEASE_TAG}" \
-            --draft
-          release_id="$(
-            gh api --paginate \
-              "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
-              --jq ".[] | select(.tag_name == \"${RELEASE_TAG}\" and .draft == true) | .id"
+          release_url="$(
+            gh release create "${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --verify-tag \
+              --generate-notes \
+              --title "${RELEASE_TAG}" \
+              --draft
           )"
+          for attempt in {1..15}; do
+            release_id="$(find_draft_id 2>/dev/null || true)"
+            if [[ "${release_id}" =~ ^[0-9]+$ ]]; then
+              break
+            fi
+            release_id=""
+            sleep 1
+          done
           if [[ ! "${release_id}" =~ ^[0-9]+$ ]]; then
             echo "Could not capture the draft release ID." >&2
             exit 1
@@ -363,4 +377,5 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --draft=false
           release_id=""
+          release_url=""
           trap - EXIT
