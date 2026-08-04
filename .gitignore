@@ -11,6 +11,10 @@ dist/
 # Local environments and secrets
 .venv/
 venv/
+.uv-cache/
+.uv-python/
+.playwright-browsers/
+.package-venv/
 .env
 .env.*
 !.env.example
@@ -27,7 +31,8 @@ douban_top250*.jsonl
 configs/*-broken-auto.yaml
 configs/*-systemchrome.yaml
 
-# Browser profiles contain session cookies and must never be committed
+# Defense in depth for legacy local profile directories. v2.1 does not create
+# or consume them, but an old checkout must never accidentally commit sessions.
 scripts/publish_states/
 scripts/browser_state/
 

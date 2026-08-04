@@ -17,29 +17,30 @@ logger = logging.getLogger(__name__)
 _BROWSER_CLEANUP_TIMEOUT_SECONDS = 2.0
 
 
-def _consume_close_outcome(task: "asyncio.Task[Any]") -> None:
-    """Retrieve a detached cleanup result so it cannot emit an unhandled error."""
+async def _cancel_and_drain(task: "asyncio.Task[Any]") -> None:
+    """Cancel a cleanup task and retrieve its terminal state."""
+
+    task.cancel()
     try:
-        task.result()
+        await task
     except BaseException:
         pass
 
 
-async def _close_browser_resource(resource: Any, label: str) -> None:
-    """Attempt browser cleanup without allowing a stuck close to hang the run."""
-    close_task = asyncio.create_task(resource.close())
+async def _run_browser_cleanup(cleanup: Any, label: str) -> None:
+    """Run one Playwright cleanup coroutine with bounded cancellation."""
+
+    close_task = asyncio.create_task(cleanup, name=f"crawler-close:{label}")
     try:
         done, _ = await asyncio.wait(
             {close_task},
             timeout=_BROWSER_CLEANUP_TIMEOUT_SECONDS,
         )
     except asyncio.CancelledError:
-        close_task.cancel()
-        close_task.add_done_callback(_consume_close_outcome)
+        await _cancel_and_drain(close_task)
         raise
     if not done:
-        close_task.cancel()
-        close_task.add_done_callback(_consume_close_outcome)
+        await _cancel_and_drain(close_task)
         logger.warning(
             "Timed out after %.1fs while closing %s.",
             _BROWSER_CLEANUP_TIMEOUT_SECONDS,
@@ -53,6 +54,21 @@ async def _close_browser_resource(resource: Any, label: str) -> None:
     except Exception as exc:  # pragma: no cover - cleanup guard
         logger.warning("Could not close %s cleanly: %s", label, exc)
 
+
+async def _close_browser_resource(resource: Any, label: str) -> None:
+    """Attempt browser cleanup without allowing a stuck close to hang the run."""
+
+    await _run_browser_cleanup(resource.close(), label)
+
+
+async def _close_playwright_manager(manager: Any) -> None:
+    """Stop Playwright even if cancellation interrupted ``__aenter__``."""
+
+    await _run_browser_cleanup(
+        manager.__aexit__(None, None, None),
+        "Playwright driver",
+    )
+
 try:
     from scrapling.parser import Selector as ScraplingSelector
 except Exception:  # pragma: no cover
@@ -60,17 +76,6 @@ except Exception:  # pragma: no cover
         from scrapling import Selector as ScraplingSelector
     except Exception:  # pragma: no cover
         ScraplingSelector = None  # type: ignore[assignment]
-
-try:
-    from playwright_stealth import Stealth
-except Exception:  # pragma: no cover
-    Stealth = None  # type: ignore[assignment]
-
-try:
-    from playwright_stealth import stealth_async
-except Exception:  # pragma: no cover
-    stealth_async = None
-
 
 class GenericSpider:
     def __init__(self, config: Dict[str, Any], network_policy: Any = None):
@@ -600,33 +605,15 @@ class GenericSpider:
 
         return records
 
-    async def _apply_context_stealth(self, context: Any) -> bool:
-        """Apply the current playwright-stealth API before pages are created."""
-        if not self.browser_config.get("stealth", False):
-            return True
-
-        if Stealth is not None:
-            try:
-                await Stealth(init_scripts_only=True).apply_stealth_async(context)
-                return True
-            except Exception as exc:  # pragma: no cover
-                logger.warning("playwright-stealth 初始化失败，将尝试兼容模式: %s", exc)
-
-        if stealth_async is not None:
-            return False
-
-        logger.warning(
-            "配置要求 stealth=true，但 playwright-stealth 不可用；将继续运行但不会应用兼容层。"
-        )
-        return True
-
     async def run(self) -> List[Dict[str, Any]]:
         if not self.start_urls:
             raise RuntimeError("No start URL configured. Add start_url or start_urls in config.")
 
         browser = None
         context = None
-        async with async_playwright() as p:
+        playwright_manager = async_playwright()
+        try:
+            p = await playwright_manager.__aenter__()
             try:
                 cdp_url = self.browser_config.get("cdp_url")
                 if cdp_url:
@@ -659,20 +646,15 @@ class GenericSpider:
                 if self.network_policy is not None:
                     await self.network_policy.install(context)
 
-                context_stealth_ready = await self._apply_context_stealth(context)
+                if self.browser_config.get("stealth", False):
+                    logger.warning(
+                        "browser.stealth is retained as a compatible no-op; "
+                        "the crawler does not provide detection-evasion behavior."
+                    )
 
                 for start_url in self.start_urls:
                     page = await context.new_page()
                     try:
-                        if (
-                            self.browser_config.get("stealth", False)
-                            and not context_stealth_ready
-                            and stealth_async is not None
-                        ):
-                            try:
-                                await stealth_async(page)
-                            except Exception as exc:  # pragma: no cover
-                                logger.warning("playwright-stealth 兼容模式应用失败: %s", exc)
                         page_records = await self._crawl_pages(page, start_url)
                         self.results.extend(page_records)
                     finally:
@@ -682,6 +664,8 @@ class GenericSpider:
                     await _close_browser_resource(context, "browser context")
                 if browser is not None:
                     await _close_browser_resource(browser, "browser")
+        finally:
+            await _close_playwright_manager(playwright_manager)
 
         return self.results
 

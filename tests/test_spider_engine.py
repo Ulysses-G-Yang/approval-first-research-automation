@@ -285,3 +285,35 @@ class GenericSpiderExtractionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(browser.context.page.close_started)
         self.assertTrue(browser.context.close_started)
         self.assertTrue(browser.close_started)
+        self.assertEqual(
+            [
+                task
+                for task in asyncio.all_tasks()
+                if task is not asyncio.current_task()
+                and not task.done()
+                and task.get_name().startswith("crawler-close:")
+            ],
+            [],
+        )
+
+    async def test_playwright_manager_is_stopped_when_startup_is_cancelled(self) -> None:
+        class InterruptedPlaywrightManager:
+            def __init__(self):
+                self.enter_started = False
+                self.exit_called = False
+
+            async def __aenter__(self):
+                self.enter_started = True
+                await asyncio.Event().wait()
+
+            async def __aexit__(self, *_args):
+                self.exit_called = True
+
+        manager = InterruptedPlaywrightManager()
+        spider = GenericSpider({"start_url": "https://example.com", "browser": {"headless": True}})
+        with patch("core.spider_engine.async_playwright", return_value=manager):
+            with self.assertRaises(asyncio.TimeoutError):
+                await asyncio.wait_for(spider.run(), timeout=0.01)
+
+        self.assertTrue(manager.enter_started)
+        self.assertTrue(manager.exit_called)
