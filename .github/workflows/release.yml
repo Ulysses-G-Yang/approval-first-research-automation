@@ -32,7 +32,7 @@ jobs:
       source_commit: ${{ steps.resolve.outputs.source_commit }}
       tag_object: ${{ steps.resolve.outputs.tag_object }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Resolve and lock release provenance
         id: resolve
         shell: bash
@@ -89,7 +89,7 @@ jobs:
     needs: preflight
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.preflight.outputs.source_commit }}
       - uses: actions/setup-python@v5
@@ -135,7 +135,7 @@ jobs:
     needs: preflight
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.preflight.outputs.source_commit }}
       - uses: actions/setup-python@v5
@@ -159,7 +159,7 @@ jobs:
           - os: windows-latest
             label: Windows
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.preflight.outputs.source_commit }}
       - uses: actions/setup-python@v5
@@ -205,7 +205,7 @@ jobs:
     needs: [preflight, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.preflight.outputs.source_commit }}
       - uses: actions/setup-python@v5
@@ -243,7 +243,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.preflight.outputs.source_commit }}
       - uses: actions/download-artifact@v4
