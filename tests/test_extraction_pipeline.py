@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import inspect
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from adapters.base import ExtractionField, PlatformAdapter
 from core.extraction_pipeline import FieldExtractionPipeline
+from core.experience_store import ExperienceStore
 from core.repair_persistence import RepairPersistence
 from core.self_healing import SelfHealingEngine
 from core.spider_engine import GenericSpider
@@ -183,6 +186,57 @@ class FieldExtractionPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.attempts[-1]["stage"], "llm_text")
         self.assertFalse(result.attempts[-1]["accepted"])
 
+    async def test_llm_candidate_attempt_is_written_as_pending_episode_proposal(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with ExperienceStore(Path(temp_dir) / "episodes.sqlite3") as store:
+                spider = GenericSpider(
+                    {
+                        "name": "fixture",
+                        "authorization_category": "synthetic_local",
+                        "enable_adaptive": False,
+                        "llm": {
+                            "enable_repair": False,
+                            "provider": "fixture",
+                            "model": "fixture-model",
+                            "prompt_version": "selector-repair-test-v1",
+                        },
+                    },
+                    experience_store=store,
+                )
+                spider.enable_llm_repair = True
+                spider.llm_repair = SimpleNamespace(
+                    repair_selector=AsyncMock(return_value=".llm-bad"),
+                    provider="runtime-fixture",
+                    model="runtime-model",
+                )
+                page = FakePage({".llm-bad": "wrong"})
+
+                value = await spider._extract_field_adaptive(
+                    page,
+                    {
+                        "name": "title",
+                        "selector": ".missing",
+                        "validation": {"enum": {"values": ["expected"]}},
+                    },
+                )
+
+                self.assertEqual(value, "")
+                payload = store.get_episode(spider.repair_episode_ids[0])
+                self.assertEqual(len(payload["proposals"]), 1)
+                self.assertEqual(
+                    payload["proposals"][0]["patch"]["fields"][0]["selector"],
+                    ".llm-bad",
+                )
+                self.assertEqual(payload["proposals"][0]["status"], "candidate")
+                self.assertFalse(payload["validations"][0]["passed"])
+                self.assertEqual(payload["decisions"], [])
+                self.assertEqual(
+                    payload["episode"]["metadata"]["prompt_version"],
+                    "selector-repair-test-v1",
+                )
+                self.assertEqual(payload["episode"]["metadata"]["provider"], "runtime-fixture")
+                self.assertEqual(payload["episode"]["metadata"]["model"], "runtime-model")
+
     async def test_self_healing_facade_uses_the_shared_fallback_path(self) -> None:
         engine = SelfHealingEngine(enable_scrapling=False)
         result = await engine.extract_with_healing(
@@ -352,6 +406,49 @@ class RepairPersistenceTests(unittest.TestCase):
 
             self.assertIsNone(memory.suggest("title", FakePage.url))
 
+    def test_repair_history_redacts_urls_and_requires_literal_results(self) -> None:
+        marker = "repair-url-secret-f61a"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "repairs.jsonl"
+            memory = RepairPersistence(str(db_path))
+            memory.record(
+                "title",
+                ".old",
+                ".approved",
+                f"https://user:{marker}@example.test/items/1?authToken={marker}",
+                True,
+                approved=True,
+            )
+            self.assertNotIn(marker, db_path.read_text(encoding="utf-8"))
+            self.assertEqual(memory.suggest("title", "https://example.test/items/2"), ".approved")
+
+            with self.assertRaisesRegex(TypeError, "true or false"):
+                memory.record(
+                    "title",
+                    ".old",
+                    ".bad",
+                    FakePage.url,
+                    "false",  # type: ignore[arg-type]
+                    approved=True,
+                )
+
+            with db_path.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "at": "2099-01-01T00:00:00+00:00",
+                            "page_pattern": "*example.test/items/*",
+                            "page_url": "https://example.test/items/3",
+                            "field": "other",
+                            "old": ".old",
+                            "new": ".must-not-run",
+                            "ok": "false",
+                            "approved": True,
+                        }
+                    )
+                    + "\n"
+                )
+            self.assertIsNone(memory.suggest("other", "https://example.test/items/3"))
 
 
 class ExampleAdapter(PlatformAdapter):
@@ -379,6 +476,13 @@ class ExampleAdapter(PlatformAdapter):
 
 
 class AdapterIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    def test_generic_spider_keeps_store_injection_keyword_only(self) -> None:
+        parameters = inspect.signature(GenericSpider).parameters
+        self.assertEqual(
+            parameters["experience_store"].kind,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
+
     async def test_from_adapter_preserves_field_policy_and_applies_post_process(self) -> None:
         adapter = ExampleAdapter()
         config = adapter.to_config(FakePage.url)

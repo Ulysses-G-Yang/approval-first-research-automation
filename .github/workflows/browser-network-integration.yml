@@ -34,4 +34,4 @@ jobs:
       - name: Install Chromium
         if: runner.os != 'Linux'
         run: python -m playwright install chromium
-      - run: python -m unittest discover -s tests -p "test_browser_network_integration.py" -v
+      - run: python -m unittest discover -s tests -p "test_browser_*_integration.py" -v

@@ -179,6 +179,15 @@ class LLMRepair:
                 context = ""
 
         context_text = str(context)
+        if self.provider in {"gemini", "qwen"}:
+            # Remote providers are explicit opt-ins, but their prompt still
+            # receives the same credential/session redaction used by episode
+            # artifacts. Local Ollama never crosses a network boundary.
+            from core.experience_store import sanitize_payload
+
+            sanitized = sanitize_payload(context_text)
+            context_text = sanitized if isinstance(sanitized, str) else ""
+
         key = self.cache_key(page_url, field_name, failed_selector, context_text)
         if key in self.selector_cache:
             return self.selector_cache[key]

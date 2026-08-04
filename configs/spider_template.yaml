@@ -1,10 +1,14 @@
 name: my-generic-spider
 description: 通用爬虫配置示例
 
+# Episode 来源授权类别：synthetic_local / public / authorized / unknown。
+# 只有 authorized 加显式 CLI opt-in 才保存脱敏完整文本；默认 unknown 仅保留结构。
+authorization_category: unknown
+
 enable_adaptive: true
 # 开关说明：
 # - true：优先使用原 selector；找不到时自动走 Scrapling 自适应模式(page.css(selector, adaptive=True) 风格)。
-# - false：仅使用原 selector，失败字段返回空字符串，便于稳定场景排查。
+# - false：只关闭 Scrapling 层；configured、fallback、已批准历史修复和显式启用的 LLM 层仍按固定顺序运行。
 # 备注：若要使用 adaptive，环境需安装 scrapling（本仓库已在 requirements.txt 中声明）。
 
 browser:
@@ -12,17 +16,17 @@ browser:
   launch:
     slow_mo: 0
   context: {}
-  stealth: false  # true 开启 playwright-stealth，但需要安装并正确配置
+  # 旧配置可保留 stealth；为避免提供检测规避能力，当前版本将它视为无操作兼容项。
+  stealth: false
 
 llm:
   enable_repair: false
-  provider: "gemini"
-  # Run `python agent.py configure provider ...` once, then reference the
-  # credential-store entry here. Never put a real API key in this file.
-  secret_ref: "provider:gemini"
-  model: "gemini-2.5-flash"
+  # 默认示例是本机 Ollama，不需要凭据或云服务。
+  # 若显式改成 gemini/qwen，页面片段会发送到该 Provider；仅对已授权数据使用，并用 secret_ref 引用系统凭据库。
+  provider: "ollama"
+  model: "qwen3"
   endpoint: ""
-  timeout: 10
+  timeout: 15
 
 request:
   timeout_ms: 30000
@@ -41,10 +45,27 @@ pagination:
 item_selector: ""
 payload_key: payload
 
+# Optional JS data captures. Old configurations may omit this section.
+# captures:
+#   - name: bootstrap
+#     type: embedded_json
+#     selector: "script#page-state"
+#     required: true
+#     max_bytes: 1048576
+#   - name: catalog
+#     type: network_json
+#     url_glob: "https://example.com/api/catalog*"
+#     required: false
+#     max_bytes: 1048576
+captures: []
+
 fields:
   - name: title
     source: "payload.title"
     selector: ""
+    fallback_selectors: []
+    validation:
+      non_empty: {}
     scope: page
   - name: url
     source: "page_url"
