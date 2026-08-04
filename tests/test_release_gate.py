@@ -18,6 +18,9 @@ from scripts.release_gate import (
 )
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 class ReleaseGateTests(unittest.TestCase):
     distribution = "generic-crawler-research-assistant"
 
@@ -157,6 +160,73 @@ class ReleaseGateTests(unittest.TestCase):
             (root / "extra-1.0.0-py3-none-any.whl").write_bytes(b"extra")
             with self.assertRaisesRegex(RuntimeError, "exactly one wheel and one sdist"):
                 validate_dist(root, version)
+
+
+class ReleaseWorkflowContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+
+    def test_preflight_locks_manual_recovery_to_the_expected_tag_object(self) -> None:
+        self.assertIn("release_tag:", self.workflow)
+        self.assertIn("expected_tag_object:", self.workflow)
+        self.assertIn(
+            '[[ ! "${EXPECTED_TAG_OBJECT}" =~ ^[0-9a-f]{40}$ ]]',
+            self.workflow,
+        )
+        self.assertIn('tag_object="$(git rev-parse "refs/tags/${RELEASE_TAG}")"', self.workflow)
+        self.assertIn('"${tag_object}" != "${EXPECTED_TAG_OBJECT}"', self.workflow)
+        self.assertIn("source_commit: ${{ steps.resolve.outputs.source_commit }}", self.workflow)
+        self.assertIn("tag_object: ${{ steps.resolve.outputs.tag_object }}", self.workflow)
+
+    def test_every_release_job_checks_out_the_single_locked_commit(self) -> None:
+        self.assertEqual(
+            self.workflow.count("ref: ${{ needs.preflight.outputs.source_commit }}"),
+            5,
+        )
+        self.assertNotIn("CHECKOUT_REF", self.workflow)
+        self.assertIn('"$(git rev-parse HEAD)" != "${SOURCE_COMMIT}"', self.workflow)
+
+    def test_release_revalidates_the_same_annotated_tag_before_publish(self) -> None:
+        self.assertIn("git fetch --force --no-tags origin", self.workflow)
+        self.assertIn(
+            '"refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"',
+            self.workflow,
+        )
+        self.assertIn('git cat-file -t "refs/tags/${RELEASE_TAG}"', self.workflow)
+        self.assertIn('"${actual_object}" != "${EXPECTED_TAG_OBJECT}"', self.workflow)
+        self.assertIn('"${actual_commit}" != "${EXPECTED_COMMIT}"', self.workflow)
+        self.assertEqual(self.workflow.count("          verify_remote_tag\n"), 2)
+
+    def test_release_is_draft_until_three_verified_assets_are_present(self) -> None:
+        self.assertIn(
+            "github.event_name == 'workflow_dispatch' && inputs.release_tag != ''",
+            self.workflow,
+        )
+        self.assertIn("${#artifacts[@]} != 3", self.workflow)
+        self.assertIn("sha256sum --check SHA256SUMS.txt", self.workflow)
+        self.assertIn("${#actual_assets[@]} != 3", self.workflow)
+        self.assertIn('gh release create "${RELEASE_TAG}"', self.workflow)
+        self.assertIn("--verify-tag", self.workflow)
+        self.assertIn("--draft", self.workflow)
+        self.assertIn('gh release edit "${RELEASE_TAG}"', self.workflow)
+        self.assertIn("--draft=false", self.workflow)
+        self.assertIn("releases/${release_id}", self.workflow)
+        self.assertIn('"${release_id}"$\'\\ttrue\'', self.workflow)
+        self.assertNotIn("gh release delete", self.workflow)
+
+    def test_workflow_cannot_create_or_move_tags_or_publish_to_pypi(self) -> None:
+        forbidden = (
+            "git tag ",
+            "git push --tags",
+            "git push --force",
+            "gh release create --target",
+            "twine upload",
+        )
+        for command in forbidden:
+            with self.subTest(command=command):
+                self.assertNotIn(command, self.workflow)
 
 
 if __name__ == "__main__":
