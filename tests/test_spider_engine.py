@@ -56,10 +56,24 @@ class GenericSpiderExtractionTests(unittest.IsolatedAsyncioTestCase):
         invalid_configs = [
             {"llm": {"enable_repair": "false"}},
             {"repair_memory": {"enabled": "false"}},
+            {"retain_full_episode_content": "false"},
         ]
         for extra in invalid_configs:
             with self.subTest(extra=extra), self.assertRaises(TypeError):
                 GenericSpider({"start_url": "https://example.test", **extra})
+
+    async def test_unconfigured_goto_preserves_playwright_default_wait_state(self) -> None:
+        class GotoPage:
+            def __init__(self):
+                self.kwargs = None
+
+            async def goto(self, _url: str, **kwargs):
+                self.kwargs = kwargs
+
+        page = GotoPage()
+        spider = GenericSpider({"start_url": "https://example.test"})
+        await spider._goto_page(page, "https://example.test")
+        self.assertEqual(page.kwargs, {"timeout": 30000})
 
     def test_fixture_supports_regular_css_selector(self) -> None:
         html = (FIXTURES / "listing-v1.html").read_text(encoding="utf-8")

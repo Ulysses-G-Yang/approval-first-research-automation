@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import inspect
@@ -9,9 +10,16 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
 
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 
-from core.extraction_pipeline import FieldExtractionPipeline
+from core.captures import (
+    CaptureConfigurationError,
+    PageCaptureSession,
+    RequiredCaptureError,
+    parse_capture_specs,
+)
+from core.extraction_pipeline import FieldExtractionPipeline, HealingResult
 from core.llm_repair import LLMRepair
 from core.quality_gate import QualityGate
 from core.repair_persistence import RepairPersistence
@@ -32,7 +40,14 @@ def _literal_config_bool(value: Any, *, default: bool, label: str) -> bool:
 
 
 async def _cancel_and_drain(task: "asyncio.Task[Any]") -> None:
-    """Cancel a cleanup task and retrieve its terminal state."""
+    """Cancel a cleanup task and retrieve its terminal state.
+
+    Merely attaching a done callback leaves the task pending while an outer
+    ``wait_for`` cancellation tears down the event loop.  Playwright then keeps
+    its driver pipes alive and an otherwise completed test/process can hang.
+    Browser close coroutines are cancellation-aware, so draining them here is
+    both bounded by their cancellation and prevents that orphaned-task state.
+    """
 
     task.cancel()
     try:
@@ -76,7 +91,13 @@ async def _close_browser_resource(resource: Any, label: str) -> None:
 
 
 async def _close_playwright_manager(manager: Any) -> None:
-    """Stop Playwright even if cancellation interrupted ``__aenter__``."""
+    """Stop Playwright even if cancellation interrupted ``__aenter__``.
+
+    An ``async with`` statement does not call ``__aexit__`` when its enter step
+    is cancelled.  Short assistant deadlines can expire while Chromium is
+    starting, leaving Playwright's connection and initialization tasks alive.
+    Managing the context explicitly closes that gap.
+    """
 
     await _run_browser_cleanup(
         manager.__aexit__(None, None, None),
@@ -97,7 +118,13 @@ except Exception:  # pragma: no cover
     ScraplingSQLiteStorage = None  # type: ignore[assignment]
 
 class GenericSpider:
-    def __init__(self, config: Dict[str, Any], network_policy: Any = None):
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        network_policy: Any = None,
+        *,
+        experience_store: Any = None,
+    ):
         self.config = config or {}
         # The approval assistant supplies a restrictive policy. Direct, standalone
         # callers keep the legacy configuration surface and behavior unchanged.
@@ -109,6 +136,22 @@ class GenericSpider:
         self.pagination = self.config.get("pagination", {})
         self.actions = self.config.get("actions", [])
         self.fields = self.config.get("fields", [])
+        self.capture_specs = parse_capture_specs(self.config.get("captures"))
+        action_result_keys = {
+            result_key.strip()
+            for action in self.actions
+            if isinstance(action, dict)
+            and isinstance((result_key := action.get("result_key")), str)
+            and result_key.strip()
+        }
+        capture_action_conflicts = sorted(
+            {spec.name for spec in self.capture_specs} & action_result_keys
+        )
+        if capture_action_conflicts:
+            raise CaptureConfigurationError(
+                "capture names cannot reuse action result_key values: "
+                + ", ".join(capture_action_conflicts)
+            )
         self.payload_key = self.config.get("payload_key", "payload")
         self.enable_adaptive = _literal_config_bool(
             self.config.get("enable_adaptive"),
@@ -143,10 +186,25 @@ class GenericSpider:
             repair_memory=self.repair_memory,
         )
         self._adapter_post_process = None
+        self.experience_store = experience_store
+        self.repair_episode_ids: List[str] = []
         self.scrapling_cache: Dict[int, Dict[str, Any]] = {}
         self._scrapling_storages: Dict[str, Any] = {}
+        self.retain_full_episode_content = _literal_config_bool(
+            self.config.get("retain_full_episode_content"),
+            default=False,
+            label="retain_full_episode_content",
+        )
         self.max_pages = int(self.pagination.get("max_pages", 1))
         self.results: List[Dict[str, Any]] = []
+
+    def set_experience_store(self, experience_store: Any) -> None:
+        """Attach an explicitly constructed local store.
+
+        No store is created by ``GenericSpider`` itself; callers retain control
+        of the path and lifetime.
+        """
+        self.experience_store = experience_store
 
     @classmethod
     def from_adapter(
@@ -157,8 +215,12 @@ class GenericSpider:
         network_policy: Any = None,
         **overrides: Any,
     ) -> "GenericSpider":
-        """Build a spider from an adapter and enable its post-processing hook."""
+        """Build a spider from an adapter and enable its post-processing hook.
 
+        Direct ``GenericSpider(adapter.to_config(...))`` construction remains a
+        plain configuration run.  Adapter post-processing is intentionally only
+        attached through this explicit entry point.
+        """
         spider = cls(
             adapter.to_config(start_url, **overrides),
             network_policy=network_policy,
@@ -261,6 +323,21 @@ class GenericSpider:
                 # Playwright versions before async API signature changes use `state` instead of `wait_until`.
                 await page.wait_for_load_state(state=wait_until, timeout=timeout)
 
+    async def _goto_page(self, page: Any, url: str) -> None:
+        """Navigate with the configured bounded wait instead of Playwright defaults."""
+
+        goto = getattr(page, "goto")
+        candidate_kwargs: Dict[str, Any] = {
+            "timeout": int(self.request_config.get("timeout_ms", 30000)),
+        }
+        if "wait_until" in self.request_config:
+            candidate_kwargs["wait_until"] = self.request_config["wait_until"]
+        kwargs = self._select_kwargs(
+            goto,
+            candidate_kwargs,
+        )
+        await goto(url, **kwargs)
+
     @staticmethod
     def _select_kwargs(method, candidate_kwargs: Dict[str, Any]) -> Dict[str, Any]:
         if method is None:
@@ -276,7 +353,14 @@ class GenericSpider:
         return {k: v for k, v in candidate_kwargs.items() if k in sig.parameters}
 
     def _scrapling_storage_for_url(self, url: str) -> Any:
-        """Return private, in-memory adaptive state for one target host."""
+        """Return per-spider, in-memory adaptive state for one target host.
+
+        Scrapling's default adaptive storage is a SQLite file inside its
+        installed package. That implicit write is inappropriate when repair
+        memory is disabled and can also fail in read-only installations. A
+        private ``:memory:`` database preserves within-run relocation without
+        creating or reusing an unapproved history file.
+        """
 
         if ScraplingSQLiteStorage is None:
             return None
@@ -288,19 +372,24 @@ class GenericSpider:
         if storage_key in self._scrapling_storages:
             return self._scrapling_storages[storage_key]
 
+        # Bypass Scrapling's process-global lru_cache wrapper so adaptive state
+        # cannot leak between independent GenericSpider runs.
         storage_factory = getattr(ScraplingSQLiteStorage, "__wrapped__", None)
         if storage_factory is None:
             logger.warning("Scrapling storage API is incompatible; adaptive extraction is disabled.")
             return None
         try:
             storage = storage_factory(storage_file=":memory:", url=url)
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:  # pragma: no cover - optional dependency guard
             logger.warning("Could not initialize in-memory Scrapling storage: %s", exc)
             return None
         self._scrapling_storages[storage_key] = storage
         return storage
 
     def _close_scrapling_storages(self) -> None:
+        # Scrapling's storage destructor owns its connection cleanup and is not
+        # idempotent. Drop selector references first, then the private storage
+        # references, so it closes exactly once without a process-global cache.
         self.scrapling_cache.clear()
         self._scrapling_storages.clear()
 
@@ -533,11 +622,16 @@ class GenericSpider:
         page,
         field: Dict[str, Any],
         context_node: Optional[Any] = None,
+        capture_context: Optional[Dict[str, Any]] = None,
     ) -> str:
         selector = self._readable_path(field.get("selector"))
+
         attr = self._readable_path(field.get("attr"))
         field_name = self._readable_path(field.get("name"))
         field_description = self._readable_path(field.get("description")) or field_name
+        # Page-scoped extraction uses the Page itself for Playwright selectors,
+        # but Scrapling needs the complete page HTML rather than an element's
+        # ``inner_html``. Treat an explicitly passed Page as no node context.
         scrapling_node = None if context_node is page else context_node
 
         async def extract_selector(candidate: str, candidate_attr: Optional[str]) -> str:
@@ -550,6 +644,8 @@ class GenericSpider:
         async def observe_configured(candidate: str) -> None:
             if not self.enable_adaptive:
                 return
+            # Preserve a successful selector as Scrapling's baseline so a later
+            # page revision has an adaptive reference instead of starting cold.
             await self._extract_from_scrapling(
                 page=page,
                 selector=candidate,
@@ -608,7 +704,357 @@ class GenericSpider:
             )
         elif result.method == "exhausted":
             logger.debug("所有提取/修复层均失败：selector=%s, name=%s", selector, field_name)
+        if self.experience_store is not None and (
+            not result.validated
+            or result.confidence < float(self.config.get("repair_episode_confidence", 0.8))
+        ):
+            await self._record_repair_episode(
+                page,
+                field,
+                result,
+                context_node=scrapling_node,
+                capture_context=capture_context,
+            )
         return result.value
+
+    @staticmethod
+    def _stable_hash(value: Any) -> str:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    async def _record_repair_episode(
+        self,
+        page: Any,
+        field: Dict[str, Any],
+        result: Any,
+        *,
+        context_node: Optional[Any] = None,
+        capture_context: Optional[Dict[str, Any]] = None,
+        metadata_overrides: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Record a failed/low-confidence extraction in the opt-in v1 store."""
+        html = await self._collect_repair_context(page, context_node=context_node)
+        page_features_hash = hashlib.sha256(html.encode("utf-8")).hexdigest()
+        extraction_plan = {
+            "fields": [field],
+            "captures": [
+                {
+                    "name": spec.name,
+                    "type": spec.type,
+                    "required": spec.required,
+                    "max_bytes": spec.max_bytes,
+                    **({"selector": spec.selector} if spec.selector else {}),
+                    **({"url_glob": spec.url_glob} if spec.url_glob else {}),
+                }
+                for spec in self.capture_specs
+            ],
+            "request": {
+                key: self.request_config.get(key)
+                for key in ("wait_until", "wait_for_selector", "timeout_ms")
+                if key in self.request_config
+            },
+        }
+        validation = self.quality_gate.validate(result.value, field.get("validation"))
+        page_url = str(getattr(page, "url", ""))
+        authorization_category = str(
+            self.config.get("authorization_category", "unknown") or "unknown"
+        )
+        is_failure = not result.validated
+        attempts = list(getattr(result, "attempts", []) or [])
+        llm_attempts = [
+            attempt
+            for attempt in attempts
+            if isinstance(attempt, dict) and attempt.get("stage") == "llm_text"
+        ]
+        actual_llm_provider = (
+            getattr(self.llm_repair, "provider", None)
+            or self.llm_config.get("provider")
+        )
+        actual_llm_model = (
+            getattr(self.llm_repair, "model", None)
+            or self.llm_config.get("model")
+        )
+        proposal_summaries = [
+            {
+                "selector": self._readable_path(attempt.get("selector")),
+                "accepted": bool(attempt.get("accepted")),
+                "quality_gate": attempt.get("quality_gate", {}),
+                "model": actual_llm_model,
+                "provider": actual_llm_provider,
+                "prompt_version": self.llm_config.get("prompt_version", "selector-repair-v1"),
+                "input_summary": {
+                    "field": self._readable_path(field.get("name")),
+                    "page_features_sha256": page_features_hash,
+                },
+            }
+            for attempt in llm_attempts
+            if self._readable_path(attempt.get("selector"))
+        ]
+        metadata = {
+            "repair_episode_schema": "RepairEpisode-v1",
+            "target": self.name,
+            "page_version": page_features_hash,
+            "extraction_plan_sha256": self._stable_hash(extraction_plan),
+            "page_features_sha256": page_features_hash,
+            "failed_fields": [self._readable_path(field.get("name"))] if is_failure else [],
+            "low_confidence_fields": (
+                [self._readable_path(field.get("name"))] if not is_failure else []
+            ),
+            "failure_stage": result.method,
+            "quality_gate": {
+                "passed": validation.passed,
+                "score": validation.score,
+                "failed_rules": validation.failed_rules,
+            },
+            "pipeline_attempts": attempts,
+            "proposals": proposal_summaries,
+            "model": actual_llm_model if llm_attempts else None,
+            "provider": actual_llm_provider if llm_attempts else None,
+            "prompt_version": (
+                self.llm_config.get("prompt_version", "selector-repair-v1")
+                if llm_attempts
+                else None
+            ),
+            "model_input_summary": (
+                {"field": self._readable_path(field.get("name")), "page_features_sha256": page_features_hash}
+                if llm_attempts
+                else None
+            ),
+            "replay_metrics": {},
+            "review": None,
+            "human_decision": "pending",
+            "artifact_hashes": [],
+            "source_authorization_category": authorization_category,
+        }
+        if metadata_overrides:
+            metadata.update(metadata_overrides)
+        episode = self.experience_store.create_episode(
+            authorization_category=authorization_category,
+            source_url=page_url,
+            page_pattern=page_url,
+            retain_full_content=self.retain_full_episode_content,
+            metadata=metadata,
+        )
+        capture = self.experience_store.add_capture(
+            episode,
+            "page_features",
+            html,
+            media_type="text/html",
+            metadata={"page_features_sha256": page_features_hash},
+        )
+        artifact_hashes = [capture.artifact_sha256]
+
+        declared_context = capture_context or {}
+        for spec in self.capture_specs:
+            if spec.name not in declared_context:
+                continue
+            capture_json = json.dumps(
+                declared_context[spec.name],
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            capture_event = self.experience_store.add_capture(
+                episode,
+                f"capture:{spec.name}",
+                capture_json,
+                media_type="application/json",
+                metadata={"name": spec.name, "type": spec.type},
+            )
+            artifact_hashes.append(capture_event.artifact_sha256)
+
+        for attempt in llm_attempts:
+            candidate_selector = self._readable_path(attempt.get("selector"))
+            if not candidate_selector:
+                continue
+            proposal = self.experience_store.add_proposal(
+                episode,
+                {
+                    "fields": [
+                        {
+                            "name": self._readable_path(field.get("name")),
+                            "selector": candidate_selector,
+                        }
+                    ]
+                },
+                source="llm_selector_candidate",
+                rationale=(
+                    "Candidate generated for the current explicit LLM-enabled run; "
+                    "it remains pending human approval."
+                ),
+            )
+            quality = attempt.get("quality_gate", {})
+            self.experience_store.add_validation(
+                episode,
+                proposal_id=proposal,
+                passed=bool(attempt.get("accepted")),
+                validator="QualityGate",
+                checks=quality,
+                metrics={
+                    "stage": attempt.get("stage"),
+                    "confidence": attempt.get("confidence"),
+                    "had_value": attempt.get("had_value"),
+                },
+            )
+        self.experience_store.append_event(
+            episode,
+            "extraction_observation",
+            {
+                "field": self._readable_path(field.get("name")),
+                "stage": result.method,
+                "confidence": result.confidence,
+                "validated": result.validated,
+                "artifact_event_id": capture.id,
+                "artifact_sha256": capture.artifact_sha256,
+            },
+            artifact_sha256=capture.artifact_sha256,
+        )
+        self.experience_store.append_event(
+            episode,
+            "artifact_manifest",
+            {"artifact_hashes": sorted(set(artifact_hashes))},
+        )
+        self.repair_episode_ids.append(episode.id)
+
+    async def _record_capture_failure_episode(
+        self,
+        page: Any,
+        capture_session: PageCaptureSession,
+        error: RequiredCaptureError,
+    ) -> None:
+        """Record a required-capture failure, then let the caller fail closed."""
+
+        failed_specs = [
+            spec
+            for spec in capture_session.specs
+            if spec.required and spec.name not in capture_session.values
+        ]
+        failed_names = [spec.name for spec in failed_specs]
+        capture_errors = {
+            spec.name: capture_session.errors.get(spec.name, "no matching capture")
+            for spec in failed_specs
+        }
+        attempts = [
+            {
+                "stage": "capture",
+                "selector": spec.selector or spec.url_glob,
+                "capture": spec.name,
+                "capture_type": spec.type,
+                "confidence": 0.0,
+                "accepted": False,
+                "had_value": False,
+                "quality_gate": {
+                    "passed": False,
+                    "score": 0.0,
+                    "failed_rules": [capture_errors[spec.name]],
+                },
+                "reason": capture_errors[spec.name],
+            }
+            for spec in failed_specs
+        ]
+        label = ",".join(failed_names) or "required_capture"
+        result = HealingResult(
+            selector=label,
+            value="",
+            confidence=0.0,
+            method="capture",
+            validated=False,
+            attempts=attempts,
+        )
+        await self._record_repair_episode(
+            page,
+            {
+                "name": f"captures:{label}",
+                "source": label,
+                "validation": {"non_empty": {}},
+            },
+            result,
+            capture_context=dict(capture_session.values),
+            metadata_overrides={
+                "failed_fields": [],
+                "failed_captures": failed_names,
+                "capture_errors": capture_errors,
+                "capture_failure": str(error),
+            },
+        )
+
+    async def _record_wait_failure_episode(
+        self,
+        page: Any,
+        error: BaseException,
+        *,
+        capture_session: Optional[PageCaptureSession] = None,
+    ) -> None:
+        wait_plan = {
+            key: self.request_config.get(key)
+            for key in ("wait_until", "wait_for_selector", "timeout_ms")
+            if key in self.request_config
+        }
+        result = HealingResult(
+            selector=self._readable_path(wait_plan.get("wait_for_selector")),
+            value="",
+            confidence=0.0,
+            method="wait",
+            validated=False,
+            attempts=[
+                {
+                    "stage": "wait",
+                    "selector": self._readable_path(wait_plan.get("wait_for_selector")),
+                    "confidence": 0.0,
+                    "accepted": False,
+                    "had_value": False,
+                    "quality_gate": {
+                        "passed": False,
+                        "score": 0.0,
+                        "failed_rules": [str(error) or type(error).__name__],
+                    },
+                    "reason": str(error) or type(error).__name__,
+                }
+            ],
+        )
+        await self._record_repair_episode(
+            page,
+            {
+                "name": "page_wait",
+                "selector": self._readable_path(wait_plan.get("wait_for_selector")),
+                "validation": {"non_empty": {}},
+            },
+            result,
+            capture_context=(
+                dict(capture_session.values) if capture_session is not None else None
+            ),
+            metadata_overrides={
+                "failed_fields": [],
+                "failed_wait_conditions": wait_plan,
+                "wait_error": str(error) or type(error).__name__,
+                "capture_errors": (
+                    dict(capture_session.errors) if capture_session is not None else {}
+                ),
+            },
+        )
+
+    async def _prepare_page_with_episode(
+        self,
+        page: Any,
+        *,
+        capture_session: Optional[PageCaptureSession] = None,
+    ) -> None:
+        try:
+            await self._prepare_page(page)
+        except (PlaywrightTimeoutError, asyncio.TimeoutError) as exc:
+            if self.experience_store is not None:
+                await self._record_wait_failure_episode(
+                    page,
+                    exc,
+                    capture_session=capture_session,
+                )
+            raise
 
     def _has_repair_path(self, field: Dict[str, Any]) -> bool:
         if self._readable_path(field.get("selector")):
@@ -620,9 +1066,16 @@ class GenericSpider:
             return True
         return bool(self.repair_memory.enabled or self.enable_llm_repair)
 
-    async def _extract_fields(self, page, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def _extract_fields(
+        self,
+        page,
+        context: Dict[str, Any],
+        *,
+        capture_errors: Optional[Dict[str, str]] = None,
+    ) -> List[Dict[str, Any]]:
         item_selector = self.config.get("item_selector") or self.config.get("list_item_selector")
         field_values: List[Dict[str, Any]] = []
+        declared_capture_names = {spec.name for spec in self.capture_specs}
 
         if not self.fields:
             return field_values
@@ -633,6 +1086,54 @@ class GenericSpider:
             else [None]
         )
         if not item_nodes:
+            if self.experience_store is not None:
+                failed_fields = [
+                    self._readable_path(field.get("name"))
+                    for field in self.fields
+                    if self._readable_path(field.get("name"))
+                ]
+                result = HealingResult(
+                    selector=self._readable_path(item_selector),
+                    value="",
+                    confidence=0.0,
+                    method="item_selector",
+                    validated=False,
+                    attempts=[
+                        {
+                            "stage": "item_selector",
+                            "selector": self._readable_path(item_selector),
+                            "confidence": 0.0,
+                            "accepted": False,
+                            "had_value": False,
+                            "quality_gate": {
+                                "passed": False,
+                                "score": 0.0,
+                                "failed_rules": ["no_items"],
+                            },
+                        }
+                    ],
+                )
+                await self._record_repair_episode(
+                    page,
+                    {
+                        "name": "item_selector",
+                        "selector": self._readable_path(item_selector),
+                        "validation": {"non_empty": {}},
+                    },
+                    result,
+                    capture_context=context,
+                    metadata_overrides={
+                        "failed_fields": failed_fields,
+                        "failure_stage": "item_selector",
+                        "item_selector": self._readable_path(item_selector),
+                        "extraction_plan_sha256": self._stable_hash(
+                            {
+                                "item_selector": self._readable_path(item_selector),
+                                "fields": self.fields,
+                            }
+                        ),
+                    },
+                )
             return field_values
 
         for node in item_nodes:
@@ -642,44 +1143,157 @@ class GenericSpider:
                 if not name:
                     continue
 
-                if source := self._readable_path(field.get("source")):
+                source = self._readable_path(field.get("source"))
+                if source:
                     value = self._read_from_context(context, source)
-                    record[name] = value
-                    continue
+                    source_validation = self.quality_gate.validate(
+                        value,
+                        field.get("validation"),
+                    )
+                    if value not in (None, "") and source_validation.passed:
+                        record[name] = value
+                        continue
+
+                    if self.experience_store is not None:
+                        source_result = HealingResult(
+                            selector=source,
+                            value=value,
+                            confidence=0.0,
+                            method="source",
+                            validated=False,
+                            attempts=[
+                                {
+                                    "stage": "source",
+                                    "selector": source,
+                                    "confidence": 0.0,
+                                    "accepted": False,
+                                    "had_value": value not in (None, ""),
+                                    "quality_gate": {
+                                        "passed": source_validation.passed,
+                                        "score": source_validation.score,
+                                        "failed_rules": source_validation.failed_rules,
+                                    },
+                                }
+                            ],
+                        )
+                        target = node if node is not None and field.get("scope") != "page" else page
+                        await self._record_repair_episode(
+                            page,
+                            field,
+                            source_result,
+                            context_node=target,
+                            capture_context=context,
+                            metadata_overrides=(
+                                {"capture_errors": dict(capture_errors)}
+                                if capture_errors
+                                else None
+                            ),
+                        )
+
+                    # Preserve pre-v2.1 source precedence for legacy action or
+                    # payload fields. Only a source rooted in a declared JS
+                    # capture may fall through to a selector after QualityGate
+                    # rejects it.
+                    if source.split(".", 1)[0] not in declared_capture_names:
+                        record[name] = value
+                        continue
 
                 if not self._has_repair_path(field):
+                    if source:
+                        record[name] = ""
                     continue
 
                 target = node if node is not None and field.get("scope") != "page" else page
-                value = await self._extract_field_adaptive(page, field, context_node=target)
+                value = await self._extract_field_adaptive(
+                    page,
+                    field,
+                    context_node=target,
+                    capture_context=context,
+                )
                 record[name] = value
 
             if record:
                 field_values.append(record)
         return field_values
 
-    async def _scrape_current_page(self, page, url: Optional[str] = None) -> List[Dict[str, Any]]:
-        if url:
-            await page.goto(url)
-        await self._prepare_page(page)
+    def _new_capture_session(self, page: Any) -> Optional[PageCaptureSession]:
+        if not self.capture_specs:
+            return None
+        return PageCaptureSession(
+            page,
+            self.capture_specs,
+            timeout_ms=int(self.request_config.get("timeout_ms", 30000)),
+        )
 
-        action_context: Dict[str, Any] = {"page_url": page.url}
-        extracted_records: List[Dict[str, Any]] = []
+    async def _scrape_current_page(
+        self,
+        page,
+        url: Optional[str] = None,
+        *,
+        capture_session: Optional[PageCaptureSession] = None,
+    ) -> List[Dict[str, Any]]:
+        capture_session = capture_session or self._new_capture_session(page)
+        if capture_session is not None:
+            capture_session.install()
+        try:
+            if url:
+                try:
+                    await self._goto_page(page, url)
+                except (PlaywrightTimeoutError, asyncio.TimeoutError) as exc:
+                    if self.experience_store is not None:
+                        await self._record_wait_failure_episode(
+                            page,
+                            exc,
+                            capture_session=capture_session,
+                        )
+                    raise
+            await self._prepare_page_with_episode(
+                page,
+                capture_session=capture_session,
+            )
 
-        for action in self.actions:
-            if action.get("type") == "evaluate":
-                script = action.get("script")
-                if not isinstance(script, str) or not script.strip():
-                    continue
-                result = await page.evaluate(script)
-                result_key = action.get("result_key")
-                if result_key:
-                    action_context[result_key] = result
-                if action.get("as_records", False):
-                    extracted_records.extend(self._ensure_records(result))
+            action_context: Dict[str, Any] = {"page_url": page.url}
+            extracted_records: List[Dict[str, Any]] = []
 
-        if not extracted_records:
-            extracted_records.extend(await self._extract_fields(page, action_context))
+            for action in self.actions:
+                if action.get("type") == "evaluate":
+                    script = action.get("script")
+                    if not isinstance(script, str) or not script.strip():
+                        continue
+                    result = await page.evaluate(script)
+                    result_key = action.get("result_key")
+                    if result_key:
+                        action_context[result_key] = result
+                    if action.get("as_records", False):
+                        extracted_records.extend(self._ensure_records(result))
+
+            if capture_session is not None:
+                try:
+                    action_context.update(await capture_session.finish())
+                except RequiredCaptureError as exc:
+                    if self.experience_store is not None:
+                        await self._record_capture_failure_episode(
+                            page,
+                            capture_session,
+                            exc,
+                        )
+                    raise
+
+            if not extracted_records:
+                extracted_records.extend(
+                    await self._extract_fields(
+                        page,
+                        action_context,
+                        capture_errors=(
+                            dict(capture_session.errors)
+                            if capture_session is not None
+                            else None
+                        ),
+                    )
+                )
+        finally:
+            if capture_session is not None:
+                await capture_session.aclose()
 
         for row in extracted_records:
             if isinstance(row, dict):
@@ -690,12 +1304,20 @@ class GenericSpider:
     async def _crawl_pages(self, page, start_url: str) -> List[Dict[str, Any]]:
         records: List[Dict[str, Any]] = []
         page_index = 1
+        capture_session: Optional[PageCaptureSession] = None
 
         self.scrapling_cache[id(page)] = {}
 
         while True:
             current = start_url if page_index == 1 else None
-            records.extend(await self._scrape_current_page(page, current))
+            records.extend(
+                await self._scrape_current_page(
+                    page,
+                    current,
+                    capture_session=capture_session,
+                )
+            )
+            capture_session = None
 
             if not self.pagination.get("enabled"):
                 break
@@ -715,11 +1337,41 @@ class GenericSpider:
             if is_disabled and is_disabled.lower() == "true":
                 break
 
-            await next_button.click()
-            await self._prepare_page(page)
-            if delay := int(self.pagination.get("delay_ms", 0) or 0):
-                await page.wait_for_timeout(delay)
+            next_capture_session = self._new_capture_session(page)
+            if next_capture_session is not None:
+                next_capture_session.install()
+            try:
+                click_kwargs = self._select_kwargs(
+                    next_button.click,
+                    {
+                        "timeout": int(self.request_config.get("timeout_ms", 30000)),
+                    },
+                )
+                try:
+                    await next_button.click(**click_kwargs)
+                except (PlaywrightTimeoutError, asyncio.TimeoutError) as exc:
+                    if self.experience_store is not None:
+                        await self._record_wait_failure_episode(
+                            page,
+                            exc,
+                            capture_session=next_capture_session,
+                        )
+                    raise
+                await self._prepare_page_with_episode(
+                    page,
+                    capture_session=next_capture_session,
+                )
+                if delay := int(self.pagination.get("delay_ms", 0) or 0):
+                    await page.wait_for_timeout(delay)
+            except BaseException:
+                if next_capture_session is not None:
+                    await next_capture_session.aclose()
+                raise
+            # A Playwright Page object survives navigation, but its Scrapling
+            # parser must not: cached HTML from page N can never be evidence for
+            # page N+1.
             self.scrapling_cache[id(page)] = {}
+            capture_session = next_capture_session
             page_index += 1
 
         return records

@@ -30,3 +30,9 @@ isolation on a host that can reach sensitive private networks; its status stays
 **Limited**. Connection pinning and aggregate browser-byte metering are tracked
 as follow-up hardening in
 [#14](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/14).
+
+The standalone `GenericSpider` keeps its legacy trusted-configuration network
+behavior. JavaScript `network_json` capture is passive and bounded per capture;
+it is not an egress sandbox and must be used only for owned or explicitly
+authorized targets. The project does not implement CAPTCHA, access-control, or
+risk-control evasion.

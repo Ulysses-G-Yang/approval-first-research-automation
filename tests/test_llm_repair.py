@@ -110,6 +110,30 @@ class LLMRepairTests(unittest.IsolatedAsyncioTestCase):
             value = await repair.repair_selector(FakePage(), "title", "标题", ".old", "<h1>Example</h1>")
         self.assertEqual(value, "")
 
+    async def test_remote_prompt_redacts_dom_credentials_and_storage_values(self) -> None:
+        marker = "remote-dom-secret-a82e"
+        repair = self.make_repair("gemini")
+        with patch.object(repair, "_repair_with_gemini", return_value=".title") as call:
+            value = await repair.repair_selector(
+                FakePage(),
+                "title",
+                "标题",
+                ".old",
+                (
+                    f"Authorization: Bearer {marker}\n"
+                    f"<script>localStorage.setItem('preferences','{marker}')</script>"
+                    f"<input type='hidden' name='csrfToken' value='{marker}'>"
+                    f"<meta content='{marker}' name='xsrf-token'>"
+                    f"<script>window.csrfToken='{marker}';xsrf='{marker}';</script>"
+                    f"<a href='https://user:{marker}@example.test/'>link</a>"
+                ),
+            )
+
+        self.assertEqual(value, ".title")
+        prompt = call.call_args.args[0]
+        self.assertNotIn(marker, prompt)
+        self.assertIn("[REDACTED]", prompt)
+
     async def test_timeout_degrades_to_empty_selector(self) -> None:
         repair = self.make_repair(timeout=0.01)
 

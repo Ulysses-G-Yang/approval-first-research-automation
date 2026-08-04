@@ -20,6 +20,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
+from core.experience_store import sanitize_source_url
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -85,7 +88,7 @@ class RepairPersistence:
             return
         if not isinstance(success, bool) or not isinstance(approved, bool):
             raise TypeError("Repair success and approved must be true or false.")
-        safe_page_url = page_url
+        safe_page_url = sanitize_source_url(page_url)
         entry: Dict[str, Any] = {
             "at": _utc_now(),
             "page_pattern": self._url_pattern(safe_page_url),
@@ -117,7 +120,7 @@ class RepairPersistence:
         if not self.enabled or self.db_path is None or not self.db_path.exists():
             return None
 
-        page_pattern = self._url_pattern(page_url) if page_url else ""
+        page_pattern = self._url_pattern(sanitize_source_url(page_url)) if page_url else ""
         candidates: List[Dict[str, Any]] = []
 
         with open(self.db_path, "r", encoding="utf-8") as handle:
