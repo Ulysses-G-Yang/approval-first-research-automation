@@ -13,10 +13,10 @@
 
 [中文说明](README.zh-CN.md)
 
-> **Status: Alpha.** The current source tree is a `v2.1.0` candidate. The
-> deterministic repair pipeline is tested locally; model quality remains
-> experimental and the e-commerce Adapter is Limited. The latest published
-> release remains `v2.0.1`.
+> **Status: Alpha.** `v2.1.0` is the release source for the locally tested
+> deterministic repair pipeline. Model quality remains Experimental, the
+> e-commerce Adapter remains Limited, and this is not a broad real-site
+> compatibility claim.
 
 ## What this project is
 
@@ -161,10 +161,11 @@ text/JSON capture; it is rejected for `public` or `unknown` authorization.
 See [JS-Adaptive Crawler](docs/JS_ADAPTIVE_CRAWLER.md) for capture, privacy,
 repair, and promotion boundaries.
 
-The candidate wheel contains `core`, `adapters`, `research_assistant`, and the
-bundled workflows. CI installs it outside the checkout on Windows and Linux and
-instantiates `GenericSpider` without launching a browser. No `v2.1.0` package has
-been published, so this source checkout remains the installation path.
+The `v2.1.0` distribution is delivered through a GitHub Release containing one
+wheel, one source distribution, and `SHA256SUMS.txt`; it is not published to
+PyPI. The wheel contains `core`, `adapters`, `research_assistant`, and bundled
+workflows. CI installs it outside the checkout on Windows and Linux, and source
+checkout installation remains supported.
 
 ## Optional approval-first assistant
 

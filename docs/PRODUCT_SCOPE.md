@@ -104,6 +104,6 @@ crawler.
 ## Release policy
 
 - Existing historical tags remain immutable.
-- `v2.0.1` remains the latest release until every v2.1.0 gate in the canonical roadmap is complete.
+- v2.1 remains Alpha after release; completing release gates does not expand the tested surface or imply arbitrary real-site support.
 - A **Tested** label must name the tested surface. Installed-package support is claimed only after installation and regression evidence exists.
 - Release tags, package versions, release notes, and GitHub assets must point to the same commit.

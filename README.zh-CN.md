@@ -12,9 +12,8 @@
 
 [English README](README.md)
 
-> **状态：Alpha。** 当前源码是 `v2.1.0` 候选版本；确定性修复管线已有本地
-> 测试，模型质量仍属实验性，电商 Adapter 为有限可用。最新正式 Release
-> 仍是 `v2.0.1`。
+> **状态：Alpha。** `v2.1.0` 是本地已测试确定性修复管线的发布源码；模型
+> 质量仍属实验性，电商 Adapter 仍为有限可用，这不代表广泛真实站点兼容。
 
 ## 这个项目是什么
 
@@ -153,9 +152,10 @@ crawler episodes export <EPISODE_ID> --store output/experience.sqlite3 --json
 
 捕获、隐私、修复与晋升边界见 [JS 自适应 Crawler](docs/JS_ADAPTIVE_CRAWLER.md)。
 
-候选 wheel 包含 `core`、`adapters`、`research_assistant` 和内置 workflows。
-CI 会在 Windows、Linux 的仓库外安装并实例化 `GenericSpider`，但不会启动浏览器。
-`v2.1.0` 尚未发布，因此当前仍以源码目录作为安装入口。
+`v2.1.0` 通过 GitHub Release 分发，资产限定为一个 wheel、一个 sdist 和
+`SHA256SUMS.txt`，不发布到 PyPI。wheel 包含 `core`、`adapters`、
+`research_assistant` 和内置 workflows；CI 会在 Windows、Linux 的仓库外
+安装验证，同时继续支持从源码目录安装。
 
 ## 可选的审批优先助手
 

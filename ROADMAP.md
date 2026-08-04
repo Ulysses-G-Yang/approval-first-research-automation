@@ -4,9 +4,9 @@ This is the canonical roadmap for the configurable crawler. The approval-first
 research assistant is an optional orchestration layer built on the crawler and
 local document tools.
 
-The repository is currently an **Alpha**. The latest published release remains
-`v2.0.1`; the current source tree is a `v2.1.0` candidate and must not be tagged
-until the release gates below are complete.
+The repository remains an **Alpha**. `v2.1.0` is the release source for the
+locally tested deterministic crawler pipeline; tagging and publication follow
+the exact-SHA gates below and do not broaden the real-site support claim.
 
 ## v2.1.0 crawler-first alpha gates
 
@@ -35,7 +35,7 @@ must pass on that exact SHA before an annotated `v2.1.0` tag is created. The
 Release contains only wheel, sdist, and checksum; after publication `main`
 advances to `2.2.0.dev0`, and no existing tag is moved.
 
-## v2.1 candidate implementation
+## v2.1 implemented surface
 
 - [#7](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/7) uses one `GenericSpider` extraction pipeline and makes the old self-healing engine a compatibility facade.
 - Optional embedded/network JSON captures preserve old YAML and source paths.
@@ -44,8 +44,9 @@ advances to `2.2.0.dev0`, and no existing tag is moved.
 - [#8](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/8) is a frozen, offline, deterministic JS evolution baseline.
 - [#9](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/9) builds artifacts once and gates an immutable GitHub Release without PyPI publication.
 
-These remain release-candidate statements until their pull requests and CI
-evidence are merged. v2.1 remains Alpha.
+These surfaces are merged and evidence-backed. v2.1 remains Alpha because the
+evidence covers the local pipeline and experience-data foundation, not arbitrary
+real-site compatibility.
 
 ## v2.2: controlled retrieval and plan repair
 
