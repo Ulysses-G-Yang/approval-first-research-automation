@@ -3,7 +3,7 @@
 ## Before a pull request
 
 - [ ] `agent doctor` passes in the verified Python 3.12 environment.
-- [ ] `agent --version` reports the candidate version from installed package metadata.
+- [ ] `agent --version` reports the source version from installed package metadata.
 - [ ] `agent list-workflows` shows every bundled workflow.
 - [ ] `python -m unittest discover -s tests -v` passes without third-party network calls.
 - [ ] `python -m compileall -q extract_prices.py agent.py core adapters research_assistant workflows scripts labs` passes.
@@ -21,7 +21,7 @@
 
 - [ ] The `main` required checks are exactly `Python 3.12 tests`, `Ubuntu installed-package`, `Windows installed-package`, and `JS benchmark`.
 - [ ] Dependabot and CodeQL are active, GitHub secret scanning is enabled, and merged feature branches are deleted.
-- [ ] The candidate version remains `2.1.0.dev0`; the release commit changes it to `2.1.0` before creating the tag.
+- [ ] The release commit, and only the release commit, changes `2.1.0.dev0` to `2.1.0` before the tag is created.
 - [ ] `agent --version`, `research_assistant.__version__`, wheel metadata, and the `v2.1.0` tag all agree on `2.1.0`.
 - [ ] The wheel and source distribution attached to the release are built from the tagged commit and pass the same package smoke test.
 - [ ] `SHA256SUMS.txt` covers exactly the single wheel and single sdist; the Release contains only those three assets.
