@@ -121,7 +121,7 @@ jobs:
           else
             python scripts/release_gate.py --dist dist --write-checksums
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-dist
           path: |
