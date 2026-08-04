@@ -116,7 +116,6 @@ def collect_doctor_report(
         ("keyring", "keyring", True),
         ("python-docx", "docx", True),
         ("PyMuPDF", "fitz", True),
-        ("playwright-stealth", "playwright_stealth", False),
         ("Gemini SDK", "google.genai", False),
         ("Qwen SDK", "dashscope", False),
     ):
@@ -148,7 +147,7 @@ def collect_doctor_report(
         else:
             checks.append((f"Provider '{name}' credential", True, "credential reference is available"))
 
-    optional_labels = {"Gemini SDK", "Qwen SDK", "playwright-stealth"}
+    optional_labels = {"Gemini SDK", "Qwen SDK"}
     required_ok = all(ok for label, ok, _detail in checks if label not in optional_labels)
     return checks, required_ok
 

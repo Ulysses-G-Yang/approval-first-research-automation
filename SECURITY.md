@@ -14,4 +14,19 @@ Never include API keys, session cookies, browser profiles or private page data i
 
 The approval-gated HTTP and browser tools reject non-public addresses, unapproved hosts, and ports other than 80/443. Browser extraction also rejects arbitrary CDP, launch, context, proxy, storage, action and model configuration; it permits only GET/HEAD/OPTIONS, blocks WebSockets and service workers, disables QUIC and non-proxied WebRTC UDP, and applies request-count and execution-time limits. Any blocked browser request fails the step instead of silently returning partial data.
 
-This is application-layer defense in depth, not a complete network sandbox. DNS validation and the eventual httpx or Chromium connection do not yet share a pinned resolver or controlled egress proxy, so DNS rebinding remains a known limitation. Do not treat browser extraction as strong isolation when it runs on a host with access to sensitive private networks.
+Real Chromium integration tests run against an ephemeral local fixture server
+on Ubuntu and Windows. They verify allowed same-host navigation/subresources and
+blocking for unapproved/private hosts, cross-host redirects, POST, WebSocket,
+service worker activation, request limits, and total duration. A blocked run
+does not emit a partial crawler artifact. The fixture uses a test-only loopback
+validator; production public-address validation is not relaxed.
+
+This is application-layer defense in depth, not a complete network sandbox. DNS
+validation and the eventual httpx or Chromium connection do not yet share a
+pinned resolver or controlled egress proxy, so a DNS validation/connect race
+remains. The browser policy also does not yet enforce one aggregate byte budget
+across every response body. Do not treat Assistant browser extraction as strong
+isolation on a host that can reach sensitive private networks; its status stays
+**Limited**. Connection pinning and aggregate browser-byte metering are tracked
+as follow-up hardening in
+[#14](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/14).
