@@ -2,7 +2,7 @@
 
 ## 目标与边界
 
-本项目的可选研究助手面向两类使用者：开发者可以继续编写 YAML、Python 工具和可复用工作流；非开发者可以描述研究目标，让已配置的大模型生成一份可读、可批准的执行计划。它建立在主 `GenericSpider` 和本地工具之上；当前版本覆盖公开网页、常见数据文件和 DOCX/PDF/Markdown 文档到可追溯 Markdown 产物的流程。
+本项目的可选研究助手面向两类使用者：开发者可以继续编写 YAML、Python 工具和可复用工作流；非开发者可以描述研究目标，让已配置的大模型生成一份可读、可批准的执行计划。它建立在主 `GenericSpider` 和本地工具之上；当前版本覆盖明确获准访问的公开 HTTP(S) 页面、常见数据文件和 DOCX/PDF/Markdown 文档到可追溯 Markdown 产物的流程。
 
 模型不拥有执行权限。它只能从注册表中选择工具，并说明为什么需要该步骤；任务执行器再根据用户的逐项批准调用工具。第一版没有任意 shell、任意 Python、页面 JavaScript、登录、私有网络或自动发布能力。DOCX、文本型 PDF、Markdown 和 TXT 的转换由受控工具完成，不会因此扩大模型权限。
 
@@ -108,7 +108,7 @@ python agent.py run "准备草稿" --workflow content_save_draft --platform juej
 - `file.read`：只读取命令行中明确以 `--input` 指定的 Markdown、TXT、CSV、JSON 文件。
 - `browser.extract`：在审批边界内复用现有 `GenericSpider`，但只接受严格白名单配置。Agent 模式禁止 YAML `actions`、`llm`、CDP、任意浏览器启动/context 参数、代理和浏览器状态文件；计划会展示所有批准的网络主机。运行时只放行这些主机 80/443 端口的公共 HTTP(S) GET/HEAD/OPTIONS 请求，关闭下载、WebSocket、service worker、QUIC 与非代理 WebRTC UDP，并限制请求数和总执行时间。Standalone `GenericSpider` 的受信任配置模式保持兼容，不属于这一审批安全边界。
 
-这些检查是应用层纵深防御，不是完整网络沙箱。域名校验和 Chromium/httpx 实际连接仍由不同组件完成，因此恶意 DNS 在检查后改变解析结果（DNS rebinding）的风险尚未由连接固定或受控 egress proxy 完全消除；在该问题解决前，不应在可访问敏感内网的高信任环境中把浏览器工具视为强隔离执行器。
+这些检查是应用层纵深防御，不是完整网络沙箱。域名校验和 Chromium/httpx 实际连接仍由不同组件完成，因此恶意 DNS 在检查后改变解析结果（DNS rebinding）的风险尚未由连接固定完全消除；浏览器端也尚未对所有响应实施单一总字节预算。两项加固记录在 [#14](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/14)；在完成前，不应在可访问敏感内网的高信任环境中把浏览器工具视为强隔离执行器。
 - `document.inspect` 与 `document.convert`：读取明确传入的 DOCX、PDF、Markdown、TXT，并在任务工作区生成 Markdown、转换清单和本地图片资产。文本型 PDF 会提取文字与内嵌图片；扫描页面会保留渲染图并标记 OCR 未执行。
 - `markdown.validate`：检查转换后 Markdown 的本地图片引用是否仍可复核。
 - `content.prepare_draft`：生成掘金、知乎或 CSDN 的离线草稿包；不打开浏览器、不读取 Cookie、不上传图片、不保存草稿、不发布。
@@ -150,7 +150,7 @@ def register_tools(registry):
 
 - 仅支持公开、获得授权的 HTTP(S) 网页，以及 DOCX、文本型 PDF、Markdown、TXT、CSV、JSON。
 - 不自动登录、不读取浏览器 profile、不采集私有或受访问控制页面。
-- 不自动发布内容。当前草稿工作流只准备本地包；现有文章脚本仍需要单独、人工确认的草稿或发布流程，平台图片上传适配器将在后续独立实现。
+- 不自动发布内容。当前分支没有登录、上传、保存平台草稿或发布脚本；草稿工作流只准备本地包。旧 tag 中的历史实现不属于 v2.1 支持面。
 - 不把模型输出当作事实。报告中的模型整理内容必须结合 `sources.jsonl` 和原始产物复核。
 
 这些限制是第一版的权限模型组成部分，而不是待绕过的障碍。后续 OCR、受审阅的草稿保存适配器和更丰富的数据工具会在同样的批准与审计机制下逐步加入。

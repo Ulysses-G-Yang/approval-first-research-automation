@@ -1,4 +1,6 @@
-# Generic Configurable Crawler
+# JS-Adaptive Generic Crawler
+
+> JS 自适应通用爬虫 / JS-Adaptive Generic Crawler
 
 > A source-checkout-first, YAML-configured Playwright crawler for public pages
 > you are permitted to access, with local JSON, JSONL, and CSV output. An
@@ -11,9 +13,10 @@
 
 [中文说明](README.zh-CN.md)
 
-> **Status: Alpha.** The current source tree is a `v2.1.0` candidate. Advanced
-> self-healing and platform-adapter modules are experimental, and the latest
-> published release remains `v2.0.1`.
+> **Status: Alpha.** The current source tree is a `v2.1.0` candidate. The
+> deterministic repair pipeline is tested locally; model quality remains
+> experimental and the e-commerce Adapter is Limited. The latest published
+> release remains `v2.0.1`.
 
 ## What this project is
 
@@ -33,17 +36,18 @@ access-control bypass, undetectable automation, or guaranteed selector healing.
 
 | Layer | Capability | Status | Current boundary |
 | --- | --- | --- | --- |
-| Core crawler | YAML-configured Playwright extraction | **Limited** | Windows/Linux wheel tests import and configure `GenericSpider`; browser execution and real-site coverage are not benchmarked. |
+| Core crawler | YAML-configured Playwright extraction | **Limited** | Local and installed-package tests cover the supported path; this is not a broad real-site compatibility claim. |
 | Core crawler | Configured CSS field extraction | **Tested** | Reproducible local HTML fixtures cover successful and failed selectors. |
 | Core crawler | Pagination and JSON/JSONL/CSV output | **Limited** | Implemented, but there is no published cross-site compatibility benchmark. |
-| Core crawler | Adaptive fallback control path | **Limited** | Covered with a deterministic stand-in; real Scrapling recovery is not benchmarked. |
-| Core crawler | Page Evolution Lab | **Tested** | Deterministic local fixture, not a target-site benchmark. |
-| Core crawler | Five-layer healing, QualityGate, repair memory | **Experimental** | Prototype modules are not connected to the supported `GenericSpider` path. |
-| Core crawler | E-commerce adapter and domain matching | **Experimental** | One template with candidate domain strings, not verified support for 19 sites. |
+| Core crawler | Unified extraction pipeline | **Tested** | `configured → fallback → approved history → Scrapling → optional LLM → empty`; every candidate uses one QualityGate. |
+| Core crawler | Embedded and passive network JSON captures | **Limited** | Bounded local fixtures cover embedded state and GET 2xx XHR/fetch JSON; no arbitrary live-site claim. |
+| Core crawler | JS Evolution Benchmark | **Tested** | Seven deterministic synthetic evolution families, zero external network/model calls. |
+| Core crawler | RepairEpisode v1 and Experience Store | **Tested** | Explicit opt-in SQLite index plus local SHA-256 CAS; disabled runs create nothing. |
+| Core crawler | Explicitly selected e-commerce Adapter candidate rules | **Limited** | Activated only through `GenericSpider.from_adapter(...)` and verified against one owned synthetic fixture; domain strings are not a support list. |
 | Optional assistant | Local CSV/JSON/TXT/Markdown reports | **Tested** | Reproducible offline workflows. |
 | Optional assistant | DOCX and text-PDF to Markdown | **Tested** | Scanned pages are preserved; OCR is not included. |
 | Optional assistant | Approval-bound execution and recovery | **Limited** | Fingerprints, process locks, crash recovery, and versioned artifacts are tested for current workspaces; legacy workspaces are view/export-only, and interrupted remote or model calls require review. |
-| Optional assistant | Public HTTP and reviewed browser access | **Limited** | Exact hosts, public DNS, methods, request counts, and run time are checked; connection pinning, aggregate browser bytes, and a network sandbox remain tracked in [#6](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/6). |
+| Optional assistant | Public HTTP and reviewed browser access | **Limited** | Exact hosts, public DNS, methods, request counts, and run time are checked; connection pinning and aggregate browser bytes are follow-up hardening in [#14](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/14), and this is not described as a network sandbox. |
 | Optional assistant | Offline draft packages | **Tested** | Creates local files only; never uploads or publishes. |
 
 The detailed truth table is in [Product Scope](docs/PRODUCT_SCOPE.md), and the
@@ -94,26 +98,68 @@ fields:
     scope: page
 ```
 
-Run the primary crawler entry point:
+Run the installed crawler entry point:
 
 ```bash
-python extract_prices.py \
-  --config crawler.yaml \
-  --output output/records.json
+crawler run --config crawler.yaml --output output/records.json
 ```
+
+`python extract_prices.py --config ...` remains a compatibility wrapper.
+
+Optional JavaScript data captures extend old YAML without invalidating it:
+
+```yaml
+captures:
+  - name: bootstrap
+    type: embedded_json
+    selector: script#page-state
+    required: true
+    max_bytes: 1048576
+  - name: catalog
+    type: network_json
+    url_glob: "https://example.com/api/catalog*"
+    required: false
+    max_bytes: 1048576
+fields:
+  - name: title
+    source: bootstrap.props.items.0.title
+```
+
+`network_json` is passive: it records only the first matching GET, 2xx,
+XHR/fetch JSON response already produced by the page. It does not initiate a
+new endpoint request.
 
 Direct crawler configurations are trusted code-like input: the standalone
 surface supports browser launch/context options and optional JavaScript actions.
 Use only configurations you control and targets you are authorized to access.
 
-For a fully offline check of selector evolution paths:
+Run the v2.1 release benchmark entirely offline:
 
 ```bash
-python -m labs.page_evolution.run_lab --json
+crawler benchmark --json --check-baseline
 ```
 
-The lab never launches a browser or accesses a third-party site. It is a
-regression fixture, not evidence of broad website support.
+The benchmark replays checked-in synthetic DOM, embedded state, network JSON,
+and hydration fixtures twice. It is a regression gate, not evidence of broad
+website support.
+
+Repair episodes are also opt-in. Without `--experience-store`, no database or
+user-directory file is created:
+
+```bash
+crawler run --config crawler.yaml --output output/records.json \
+  --experience-store output/experience.sqlite3
+crawler episodes list --store output/experience.sqlite3 --json
+crawler episodes show <EPISODE_ID> --store output/experience.sqlite3 --json
+crawler episodes export <EPISODE_ID> --store output/experience.sqlite3 --json
+```
+
+Non-synthetic content is structure-only by default. For an explicitly
+authorized source, `--retain-full-episode-content` opts into redacted full
+text/JSON capture; it is rejected for `public` or `unknown` authorization.
+
+See [JS-Adaptive Crawler](docs/JS_ADAPTIVE_CRAWLER.md) for capture, privacy,
+repair, and promotion boundaries.
 
 The candidate wheel contains `core`, `adapters`, `research_assistant`, and the
 bundled workflows. CI installs it outside the checkout on Windows and Linux and
@@ -193,7 +239,8 @@ See [Security Policy](SECURITY.md) for responsible reporting.
 
 ```text
 core/spider_engine.py   primary GenericSpider engine
-extract_prices.py       source-checkout crawler CLI
+core/crawler_cli.py     installed crawler CLI
+extract_prices.py       legacy-compatible source wrapper
 configs/                crawler configuration templates
 labs/                   local page-evolution fixtures
 adapters/               experimental adapter interfaces and templates
@@ -206,20 +253,23 @@ tests/                  crawler and workflow tests
 The two supported layers are separate:
 
 ```text
-trusted YAML -> extract_prices.py -> GenericSpider -> JSON/JSONL/CSV
+trusted YAML -> crawler / extract_prices.py -> GenericSpider
+             -> unified extraction + optional captures -> JSON/JSONL/CSV
 
 reviewed task -> agent run --workflow crawler_report -> browser.extract -> GenericSpider
 ```
 
-The five-layer `SelfHealingEngine`, `QualityGate`, `RepairPersistence`, and
-adapter prototypes are not yet part of the primary crawler path.
+`SelfHealingEngine` is now a compatibility facade over the same extraction
+pipeline used by `GenericSpider`; `QualityGate`, explicitly enabled approved
+repair memory, and RepairEpisode evidence are on that path. Adapters are never
+selected by domain implicitly: callers opt in through `GenericSpider.from_adapter(...)`.
 
 ## Development
 
 ```bash
 python -m unittest discover -s tests -v
 python -m compileall -q extract_prices.py agent.py core adapters research_assistant workflows scripts labs
-python -m labs.page_evolution.run_lab --json
+crawler benchmark --json --check-baseline
 git diff --check
 ```
 
@@ -230,8 +280,9 @@ Contribution and release requirements are documented in
 ## Historical context
 
 The repository began as an educational Taobao extraction project. The active
-line generalizes the crawler engine and keeps the single-site material as an
-immutable historical example, not a production claim. See
+line generalizes the crawler engine and retains a no-default-target compatibility
+example; immutable historical behavior remains on the old tags. Neither is a
+production claim. See
 [Educational Version](docs/EDUCATIONAL_VERSION.md).
 
 ## License

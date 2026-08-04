@@ -3,6 +3,7 @@ from __future__ import annotations
 """Render the checked-in social preview from local HTML with Playwright."""
 
 import argparse
+import os
 from pathlib import Path
 
 
@@ -13,9 +14,9 @@ STAGES = ("all", "collect", "verify", "compose")
 
 def page_html(active_stage: str) -> str:
     stages = [
-        ("collect", "01", "Collect", "Public web pages\nLocal files", "URLs, DOCX, PDF, CSV"),
-        ("verify", "02", "Verify", "Plan and approve\neach action", "Sources, risk, audit log"),
-        ("compose", "03", "Compose", "Markdown, datasets\nand draft packages", "Artifacts you can review"),
+        ("collect", "01", "Capture", "DOM, embedded JSON\nand passive XHR", "Bounded, explicit capture plans"),
+        ("verify", "02", "Recover", "Fallback, approved history\nand adaptive candidates", "One QualityGate at every stage"),
+        ("compose", "03", "Prove", "Repair Episodes\nand offline benchmark", "Evidence before promotion"),
     ]
     cards = [
         f"""
@@ -140,9 +141,9 @@ def page_html(active_stage: str) -> str:
 <body>
   <main>
     <header>
-      <div class=\"eyebrow\">Approval-first AI research automation</div>
-      <h1>Web and files become evidence you can review.</h1>
-      <p class=\"subtitle\">The model proposes the plan. You approve every action.</p>
+      <div class=\"eyebrow\">JS-Adaptive Generic Crawler · JS 自适应通用爬虫</div>
+      <h1>When pages evolve, extraction stays measurable.</h1>
+      <p class=\"subtitle\">A local crawler pipeline with bounded captures and approval-first repair evidence.</p>
     </header>
     <div class=\"flow\">
       {cards[0]}
@@ -151,7 +152,7 @@ def page_html(active_stage: str) -> str:
       <div class=\"arrow\"></div>
       {cards[2]}
     </div>
-    <footer><span>Public sources and explicitly supplied local files</span><strong>Collect -> Verify -> Compose</strong></footer>
+    <footer><span>Owned fixtures and targets you are authorized to access</span><strong>Capture -> Gate -> Evidence</strong></footer>
   </main>
 </body>
 </html>"""
@@ -165,7 +166,10 @@ def render(output: Path, active_stage: str) -> Path:
     output = output.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
+        launch_options: dict[str, object] = {"headless": True}
+        if executable := os.environ.get("CRAWLER_CHROMIUM_EXECUTABLE"):
+            launch_options["executable_path"] = executable
+        browser = playwright.chromium.launch(**launch_options)
         try:
             page = browser.new_page(viewport={"width": 1280, "height": 640}, device_scale_factor=1)
             page.set_content(page_html(active_stage), wait_until="load")

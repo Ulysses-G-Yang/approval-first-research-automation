@@ -1,5 +1,7 @@
 name: taobao-educational
-description: 淘宝硬编码采集逻辑的 YAML 迁移版本（用于教学）
+description: 淘宝硬编码采集逻辑的 YAML 迁移版本（仅作历史教学；无默认目标，不属于验证范围）
+# ARCHIVE/NO SUPPORT: 仅保留旧 YAML/actions 兼容示例；不得作为平台支持证据，
+# 也不应在没有明确授权的目标上添加 start_url。
 
 browser:
   headless: false
@@ -13,11 +15,10 @@ browser:
 
 llm:
   enable_repair: false
-  provider: "gemini"
-  secret_ref: "provider:gemini"
-  model: "gemini-2.5-flash"
+  provider: "ollama"
+  model: "qwen3"
   endpoint: ""
-  timeout: 10
+  timeout: 15
 
 request:
   timeout_ms: 30000

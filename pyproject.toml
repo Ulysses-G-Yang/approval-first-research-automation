@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "generic-crawler-research-assistant"
 dynamic = ["version"]
-description = "Configurable web crawler with optional approval-first research workflows."
+description = "JS-adaptive generic crawler with optional approval-first research workflows."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
