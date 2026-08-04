@@ -1,8 +1,10 @@
 # This file has no API key. Copy it to ~/GenericCrawler/agent.yaml or pass --config.
-# API keys are stored separately in the system credential store by:
+# Deterministic crawler and Assistant workflows do not require a provider.
+# Select a provider explicitly only when a workflow needs one. Remote providers
+# receive the approved workflow input. API keys are stored separately in the
+# system credential store by:
 #   python agent.py configure provider --kind openai_compatible --model <model> --base-url <url>
 version: 1
-default_provider: example-openai-compatible
 
 providers:
   example-openai-compatible:

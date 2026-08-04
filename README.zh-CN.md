@@ -1,4 +1,6 @@
-# 通用可配置 Crawler
+# JS 自适应通用爬虫
+
+> JS-Adaptive Generic Crawler / JS 自适应通用爬虫
 
 > 面向允许访问的公开网页，以受信任 YAML 配置 Playwright 采集并输出本地
 > JSON、JSONL 或 CSV。审批优先的研究助手是可选上层，不是运行 Crawler
@@ -10,8 +12,9 @@
 
 [English README](README.md)
 
-> **状态：Alpha。** 当前源码是 `v2.1.0` 候选版本；高级自愈和平台适配器
-> 仍为实验模块，最新正式 Release 仍是 `v2.0.1`。
+> **状态：Alpha。** 当前源码是 `v2.1.0` 候选版本；确定性修复管线已有本地
+> 测试，模型质量仍属实验性，电商 Adapter 为有限可用。最新正式 Release
+> 仍是 `v2.0.1`。
 
 ## 这个项目是什么
 
@@ -29,17 +32,18 @@
 
 | 层级 | 能力 | 状态 | 当前边界 |
 | --- | --- | --- | --- |
-| Crawler 核心 | YAML 配置化 Playwright 采集 | **有限可用** | Windows/Linux wheel 测试会导入并配置 `GenericSpider`；尚未基准验证真实浏览器执行和网站覆盖率。 |
+| Crawler 核心 | YAML 配置化 Playwright 采集 | **有限可用** | 受控 Chromium 集成测试覆盖本地网络与 capture 边界，Windows/Linux wheel 测试覆盖安装面；没有真实站点兼容性基准。 |
 | Crawler 核心 | 配置化 CSS 字段提取 | **已测试** | 本地 HTML 夹具覆盖选择器成功和失败。 |
 | Crawler 核心 | 分页及 JSON/JSONL/CSV 输出 | **有限可用** | 已实现，但没有公开的跨站兼容性基准。 |
-| Crawler 核心 | 自适应回退控制路径 | **有限可用** | 由确定性替身覆盖；尚未对真实 Scrapling 恢复能力做基准验证。 |
-| Crawler 核心 | Page Evolution Lab | **已测试** | 确定性本地夹具，不代表目标网站兼容性。 |
-| Crawler 核心 | 五层自愈、QualityGate、修复记忆 | **实验性** | 原型模块尚未接入正式 `GenericSpider` 路径。 |
-| Crawler 核心 | 电商 Adapter 与域名匹配 | **实验性** | 只有一个模板和候选域名字符串，不代表已验证支持 19 个网站。 |
+| Crawler 核心 | 单一提取管线 | **已测试** | `配置选择器 → fallback → 已批准历史 → Scrapling → 可选 LLM → 空值`，各层共用 QualityGate。 |
+| Crawler 核心 | 内嵌 JSON 与被动网络 JSON 捕获 | **有限可用** | 本地夹具覆盖内嵌状态和 GET/2xx/XHR/fetch JSON，不代表任意真实站点兼容。 |
+| Crawler 核心 | JS Evolution Benchmark | **已测试** | 7 类确定性合成演化，外网调用和真实模型调用均为 0。 |
+| Crawler 核心 | RepairEpisode v1 与 Experience Store | **已测试** | 显式启用的 SQLite 索引与本地 SHA-256 CAS；默认运行不创建文件。 |
+| Crawler 核心 | 显式选择的电商 Adapter 候选规则 | **有限可用** | 仅通过 `GenericSpider.from_adapter(...)` 启用，并只以一个自有合成夹具验证；候选域名不是支持清单。 |
 | 可选助手 | 本地 CSV/JSON/TXT/Markdown 报告 | **已测试** | 有可重复的离线工作流。 |
 | 可选助手 | DOCX、文本型 PDF 转 Markdown | **已测试** | 扫描页会保留，但不做 OCR。 |
 | 可选助手 | 审批绑定执行与恢复 | **有限可用** | 当前任务空间已测试指纹、进程锁、异常恢复和版本化产物；旧任务空间只能查看/导出，中断的远程或模型调用必须人工复核。 |
-| 可选助手 | 公开 HTTP 与受审查浏览器访问 | **有限可用** | 已检查精确主机、公开 DNS、方法、请求数和运行时间；连接固定、浏览器总字节计量及网络沙箱仍见 [#6](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/6)。 |
+| 可选助手 | 公开 HTTP 与受审查浏览器访问 | **有限可用** | 已检查精确主机、公开 DNS、方法、请求数和运行时间；连接固定与浏览器总字节计量作为后续加固记录在 [#14](https://github.com/Ulysses-G-Yang/approval-first-research-automation/issues/14)，且不宣称网络沙箱。 |
 | 可选助手 | 离线内容草稿包 | **已测试** | 只创建本地文件，不上传、不发布。 |
 
 完整能力边界见[产品范围](docs/PRODUCT_SCOPE.md)，实施顺序见唯一权威
@@ -90,25 +94,64 @@ fields:
     scope: page
 ```
 
-运行主 Crawler 入口：
+运行正式 Crawler 入口：
 
 ```bash
-python extract_prices.py \
-  --config crawler.yaml \
-  --output output/records.json
+crawler run --config crawler.yaml --output output/records.json
 ```
+
+旧的 `python extract_prices.py --config ...` 继续作为兼容包装。
+
+旧 YAML 仍然有效；需要 JS 数据时可选增加：
+
+```yaml
+captures:
+  - name: bootstrap
+    type: embedded_json
+    selector: script#page-state
+    required: true
+    max_bytes: 1048576
+  - name: catalog
+    type: network_json
+    url_glob: "https://example.com/api/catalog*"
+    required: false
+    max_bytes: 1048576
+fields:
+  - name: title
+    source: bootstrap.props.items.0.title
+```
+
+`network_json` 只被动记录页面本来就发出的首个匹配 GET、2xx、XHR/fetch
+JSON 响应，不会主动请求接口。
 
 直接 Crawler 配置属于受信任的类代码输入：Standalone 模式允许配置浏览器启动
 和 context 参数，也支持可选 JavaScript actions。只使用你自己控制的配置，并且
 只访问你有权访问的目标。
 
-如需完全离线验证选择器演化路径：
+执行完全离线的发布硬门槛：
 
 ```bash
-python -m labs.page_evolution.run_lab --json
+crawler benchmark --json --check-baseline
 ```
 
-该实验不会启动浏览器或访问第三方网站。它只是回归夹具，不代表广泛网站支持。
+基准会连续两次重放仓库内 DOM、内嵌状态、网络 JSON 和 hydration 合成夹具；
+它只是回归证据，不代表广泛网站支持。
+
+Repair Episode 默认关闭。只有显式传入本地存储路径才创建 SQLite/CAS：
+
+```bash
+crawler run --config crawler.yaml --output output/records.json \
+  --experience-store output/experience.sqlite3
+crawler episodes list --store output/experience.sqlite3 --json
+crawler episodes show <EPISODE_ID> --store output/experience.sqlite3 --json
+crawler episodes export <EPISODE_ID> --store output/experience.sqlite3 --json
+```
+
+非合成内容默认只保存结构。只有来源明确标记为 `authorized` 时，操作者才可额外传入
+`--retain-full-episode-content`，显式选择保存已脱敏的完整文本/JSON；`public` 或
+`unknown` 来源会拒绝该选项。
+
+捕获、隐私、修复与晋升边界见 [JS 自适应 Crawler](docs/JS_ADAPTIVE_CRAWLER.md)。
 
 候选 wheel 包含 `core`、`adapters`、`research_assistant` 和内置 workflows。
 CI 会在 Windows、Linux 的仓库外安装并实例化 `GenericSpider`，但不会启动浏览器。
@@ -182,7 +225,8 @@ agent resume <TASK_ID>
 
 ```text
 core/spider_engine.py   主 GenericSpider 引擎
-extract_prices.py       源码目录 Crawler CLI
+core/crawler_cli.py     安装后的正式 Crawler CLI
+extract_prices.py       兼容旧用法的源码包装器
 configs/                Crawler 配置模板
 labs/                   本地页面演化夹具
 adapters/               实验性 Adapter 接口和模板
@@ -195,20 +239,23 @@ tests/                  Crawler 与工作流测试
 两个层级彼此分开：
 
 ```text
-受信任 YAML -> extract_prices.py -> GenericSpider -> JSON/JSONL/CSV
+受信任 YAML -> crawler / extract_prices.py -> GenericSpider
+             -> 单一提取管线 + 可选 captures -> JSON/JSONL/CSV
 
 受审查任务 -> agent run --workflow crawler_report -> browser.extract -> GenericSpider
 ```
 
-五层 `SelfHealingEngine`、`QualityGate`、`RepairPersistence` 和 Adapter 原型
-尚未进入主 Crawler 路径。
+`SelfHealingEngine` 已是 `GenericSpider` 同一提取管线的兼容门面；
+`QualityGate`、显式启用且仅复用已批准记录的 repair memory，以及
+RepairEpisode 证据均已进入该路径。Adapter 不会按域名自动启用，只能显式调用
+`GenericSpider.from_adapter(...)`。
 
 ## 开发验证
 
 ```bash
 python -m unittest discover -s tests -v
 python -m compileall -q extract_prices.py agent.py core adapters research_assistant workflows scripts labs
-python -m labs.page_evolution.run_lab --json
+crawler benchmark --json --check-baseline
 git diff --check
 ```
 
@@ -217,8 +264,8 @@ git diff --check
 
 ## 历史说明
 
-仓库最初是淘宝数据采集教学项目。当前产品线把采集引擎泛化，早期单站点内容作为
-不可变历史示例保留，不代表生产级能力。详见
+仓库最初是淘宝数据采集教学项目。当前产品线把采集引擎泛化，并保留一个无默认
+目标的兼容示例；不可变的历史行为留在旧 tag 中。两者都不代表生产级能力。详见
 [教育版本说明](docs/EDUCATIONAL_VERSION.md)。
 
 ## 许可证
