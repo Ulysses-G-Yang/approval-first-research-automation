@@ -1,7 +1,7 @@
 """
 平台适配器抽象基类。
 
-定义了一类网站的共性：字段提取规则、分页策略、反检测配置，
+定义了一类页面的候选字段规则、分页策略和浏览器配置，
 以及采集后的数据处理逻辑。
 
 子类化示例::
@@ -118,11 +118,11 @@ class PlatformAdapter(ABC):
         return {"enabled": False, "max_pages": 1}
 
     def get_stealth_profile(self) -> Dict[str, Any]:
-        """获取反检测配置。
+        """获取可选的浏览器兼容配置。
 
         Returns:
-            ``{"stealth": True}`` 或 ``{"stealth": False}``。
-            未来可扩展为梯度策略配置。
+            ``{"stealth": True}`` 或 ``{"stealth": False}``。适配器不得
+            将该设置描述为绕过访问控制、验证码或风险控制的能力。
         """
         return {"stealth": False}
 
@@ -178,6 +178,10 @@ class PlatformAdapter(ABC):
                     "selector": field.selector,
                     "attr": field.attr,
                     "description": field.description,
+                    "fallback_selectors": list(field.fallback_selectors),
+                    "validation": (
+                        dict(field.validation) if field.validation is not None else None
+                    ),
                 }
                 for field in self.get_fields()
             ],

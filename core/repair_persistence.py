@@ -20,24 +20,45 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
-
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 class RepairPersistence:
-    """修复记忆库 —— 记录和查询历史 CSS 选择器修复。
+    """修复记忆库 —— 记录和查询人工批准的 CSS 选择器修复。
 
     使用方式::
 
-        rp = RepairPersistence()
-        rp.record("title", ".title", ".product-name", "https://demo.local/item/1", True)
+        rp = RepairPersistence("~/.generic_crawler/repairs.jsonl")
+        rp.record(
+            "title", ".title", ".product-name",
+            "https://demo.local/item/1", True, approved=True,
+        )
         suggestion = rp.suggest("title", "https://demo.local/item/2")
+
+    Persistence is disabled by default. Supplying a path (or ``enabled=True``)
+    opts in explicitly, and disabled instances do not create directories or
+    files. Successful attempts are not reusable until ``approved=True`` is
+    recorded by the caller's human-review boundary.
     """
 
-    def __init__(self, db_path: str = "~/.generic_crawler/repairs.jsonl"):
-        self.db_path = Path(db_path).expanduser()
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+    DEFAULT_DB_PATH = "~/.generic_crawler/repairs.jsonl"
+
+    def __init__(
+        self,
+        db_path: Optional[str] = None,
+        *,
+        enabled: Optional[bool] = None,
+    ):
+        if enabled is None:
+            enabled = db_path is not None
+        if not isinstance(enabled, bool):
+            raise TypeError("RepairPersistence enabled must be true or false.")
+        self.enabled = enabled
+        resolved_path = db_path or (self.DEFAULT_DB_PATH if self.enabled else None)
+        self.db_path = Path(resolved_path).expanduser() if resolved_path else None
+        if self.enabled and self.db_path is not None:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
     # ── 公开方法 ──────────────────────────────────────────────────
 
@@ -48,6 +69,7 @@ class RepairPersistence:
         new_selector: str,
         page_url: str,
         success: bool,
+        approved: bool = False,
     ) -> None:
         """记录一次修复尝试。
 
@@ -57,15 +79,22 @@ class RepairPersistence:
             new_selector: 修复后的新选择器。
             page_url: 触发修复的页面 URL。
             success: 修复后提取是否成功（通过质量校验）。
+            approved: 是否已经人工批准可供后续运行复用。默认 False。
         """
+        if not self.enabled or self.db_path is None:
+            return
+        if not isinstance(success, bool) or not isinstance(approved, bool):
+            raise TypeError("Repair success and approved must be true or false.")
+        safe_page_url = page_url
         entry: Dict[str, Any] = {
             "at": _utc_now(),
-            "page_pattern": self._url_pattern(page_url),
-            "page_url": page_url,
+            "page_pattern": self._url_pattern(safe_page_url),
+            "page_url": safe_page_url,
             "field": field_name,
             "old": old_selector,
             "new": new_selector,
             "ok": success,
+            "approved": approved,
         }
         with open(self.db_path, "a", encoding="utf-8", newline="\n") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -73,10 +102,10 @@ class RepairPersistence:
     def suggest(self, field_name: str, page_url: str = "") -> Optional[str]:
         """查找历史上对此字段最成功的修复选择器。
 
+        只有 ``ok=true`` 且 ``approved=true`` 的记录会成为候选。
         匹配优先级：
-        1. 相同页面模式 + 成功 → 得分 3
-        2. 相同字段名 + 成功   → 得分 2
-        3. 相同字段名 + 失败   → 得分 0（跳过）
+        1. 相同页面模式 + 已批准成功 → 得分 3
+        2. 相同字段名 + 已批准成功   → 得分 2
 
         Args:
             field_name: 字段名。
@@ -85,7 +114,7 @@ class RepairPersistence:
         Returns:
             高置信度替代选择器，无匹配时返回 None。
         """
-        if not self.db_path.exists():
+        if not self.enabled or self.db_path is None or not self.db_path.exists():
             return None
 
         page_pattern = self._url_pattern(page_url) if page_url else ""
@@ -103,7 +132,9 @@ class RepairPersistence:
 
                 if entry.get("field") != field_name:
                     continue
-                if not entry.get("ok"):
+                if entry.get("ok") is not True:
+                    continue
+                if entry.get("approved") is not True:
                     continue
 
                 score = 2  # 同字段名的基础分
@@ -125,7 +156,7 @@ class RepairPersistence:
         Returns:
             {'total': N, 'success': N, 'rate': 0.0~1.0}
         """
-        if not self.db_path.exists():
+        if not self.enabled or self.db_path is None or not self.db_path.exists():
             return {"total": 0, "success": 0, "rate": 0.0}
 
         total = 0
@@ -138,7 +169,7 @@ class RepairPersistence:
                 try:
                     entry = json.loads(line)
                     total += 1
-                    if entry.get("ok"):
+                    if entry.get("ok") is True:
                         success += 1
                 except json.JSONDecodeError:
                     continue

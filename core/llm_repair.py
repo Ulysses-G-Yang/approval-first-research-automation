@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import logging
 import re
 from typing import Any, Dict, Optional
@@ -15,14 +16,18 @@ class LLMRepair:
     根据失败的 CSS 选择器调用模型修复新的选择器。
 
     支持 provider:
+      - ollama (local process; no credential or cloud service required)
       - gemini (google-genai)
       - qwen   (dashscope Qwen-VL/Qwen-VL-Plus)
     """
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
-        self.enable_repair = bool(self.config.get("enable_repair", False))
-        self.provider = str(self.config.get("provider", "gemini")).strip().lower() or "gemini"
+        raw_enable_repair = self.config.get("enable_repair", False)
+        if not isinstance(raw_enable_repair, bool):
+            raise TypeError("llm.enable_repair must be true or false.")
+        self.enable_repair = raw_enable_repair
+        self.provider = str(self.config.get("provider", "ollama")).strip().lower() or "ollama"
         self.secret_ref = str(self.config.get("secret_ref", "") or "").strip()
         self.api_key = self._load_api_key() if self.enable_repair else ""
         self.model = str(self.config.get("model", "") or "").strip()
@@ -31,7 +36,11 @@ class LLMRepair:
         self.selector_cache: Dict[str, str] = {}
 
         if not self.model:
-            self.model = "gemini-2.5-flash" if self.provider == "gemini" else "qwen-vl-plus"
+            self.model = {
+                "gemini": "gemini-2.5-flash",
+                "qwen": "qwen-vl-plus",
+                "ollama": "qwen3",
+            }.get(self.provider, "qwen3")
 
         # 可选导入，仅在对应 provider 开启时加载，避免不必要依赖报错打断初始化。
         self._gemini_client = None
@@ -83,8 +92,17 @@ class LLMRepair:
             return inline_key
         return ""
 
-    def cache_key(self, page_url: str, field_name: str) -> str:
-        return f"{page_url}::{field_name}"
+    def cache_key(
+        self,
+        page_url: str,
+        field_name: str,
+        failed_selector: str = "",
+        context: str = "",
+    ) -> str:
+        page_version = hashlib.sha256(
+            self._truncate_html(context).encode("utf-8")
+        ).hexdigest()
+        return f"{page_url}::{field_name}::{failed_selector}::{page_version}"
 
     @staticmethod
     def _truncate_html(html: str, max_len: int = 3000) -> str:
@@ -132,7 +150,7 @@ class LLMRepair:
         if not self.enable_repair:
             return ""
 
-        if not self.api_key:
+        if self.provider != "ollama" and not self.api_key:
             logger.debug("LLMRepair 未配置 api_key，跳过修复。")
             return ""
 
@@ -144,10 +162,6 @@ class LLMRepair:
             page_url = str(getattr(page, "url", ""))
         except Exception:
             page_url = ""
-
-        key = self.cache_key(page_url, field_name)
-        if key in self.selector_cache:
-            return self.selector_cache[key]
 
         html_or_screenshot = context_html_or_screenshot or ""
         if not html_or_screenshot:
@@ -164,9 +178,14 @@ class LLMRepair:
             except Exception:
                 context = ""
 
+        context_text = str(context)
+        key = self.cache_key(page_url, field_name, failed_selector, context_text)
+        if key in self.selector_cache:
+            return self.selector_cache[key]
+
         prompt = (
             "当前网页片段如下：\n"
-            f"{self._truncate_html(str(context))}\n"
+            f"{self._truncate_html(context_text)}\n"
             f"我需要提取\"{field_description}\"的内容，之前的选择器\"{failed_selector}\"已失效，"
             "请给出一个最精准的新CSS选择器，只输出选择器本身。"
         )
@@ -175,12 +194,17 @@ class LLMRepair:
         try:
             if self.provider == "qwen" and self._dashscope is not None:
                 selector = await asyncio.wait_for(
-                    asyncio.to_thread(self._repair_with_qwen, prompt, str(context), page_url),
+                    asyncio.to_thread(self._repair_with_qwen, prompt, context_text, page_url),
                     timeout=self.timeout + 2,
                 )
             elif self.provider == "gemini" and self._gemini_client is not None:
                 selector = await asyncio.wait_for(
-                    asyncio.to_thread(self._repair_with_gemini, prompt, str(context), page_url),
+                    asyncio.to_thread(self._repair_with_gemini, prompt, context_text, page_url),
+                    timeout=self.timeout + 2,
+                )
+            elif self.provider == "ollama":
+                selector = await asyncio.wait_for(
+                    self._repair_with_ollama(prompt),
                     timeout=self.timeout + 2,
                 )
             else:
@@ -200,6 +224,39 @@ class LLMRepair:
 
         self.selector_cache[key] = selector
         return selector
+
+    async def _repair_with_ollama(self, prompt: str) -> str:
+        """Run the legacy local Ollama provider without a second pipeline."""
+
+        process = None
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "ollama",
+                "run",
+                self.model,
+                prompt,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await process.communicate()
+        except asyncio.CancelledError:
+            if process is not None and process.returncode is None:
+                process.kill()
+                await process.wait()
+            raise
+        except Exception as exc:
+            logger.debug("Local Ollama provider is unavailable: %s", exc)
+            return ""
+        if process.returncode != 0:
+            stderr_text = stderr.decode("utf-8", errors="replace")
+            logger.warning(
+                "Local Ollama repair failed for model=%s; stderr_bytes=%d sha256=%s",
+                self.model,
+                len(stderr),
+                hashlib.sha256(stderr_text.encode("utf-8")).hexdigest(),
+            )
+            return ""
+        return stdout.decode("utf-8", errors="replace").strip()
 
     def _repair_with_gemini(self, prompt: str, context: str, page_url: str) -> str:
         client = self._gemini_client
@@ -222,7 +279,11 @@ class LLMRepair:
                         for part in getattr(content, "parts", []) or []:
                             parts.append(getattr(part, "text", ""))
                 text = "".join(str(p) for p in parts)
-        logger.debug("Gemini 返回: %s", text[:120])
+        logger.debug(
+            "Gemini returned candidate metadata: chars=%d sha256=%s",
+            len(text),
+            hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        )
         return text
 
     def _repair_with_qwen(self, prompt: str, context: str, page_url: str) -> str:
@@ -254,19 +315,31 @@ class LLMRepair:
         if outputs is not None:
             text = getattr(outputs, "text", None) or ""
             if text:
-                logger.debug("Qwen 返回: %s", text[:120])
+                logger.debug(
+                    "Qwen returned candidate metadata: chars=%d sha256=%s",
+                    len(str(text)),
+                    hashlib.sha256(str(text).encode("utf-8")).hexdigest(),
+                )
                 return text
             if hasattr(outputs, "choices") and outputs.choices:
                 message = outputs.choices[0].get("message") if isinstance(outputs.choices[0], dict) else getattr(outputs.choices[0], "message", None)
                 if message:
                     text = message.get("content") if isinstance(message, dict) else str(message)
-                    logger.debug("Qwen 返回: %s", str(text)[:120])
+                    logger.debug(
+                        "Qwen returned candidate metadata: chars=%d sha256=%s",
+                        len(str(text)),
+                        hashlib.sha256(str(text).encode("utf-8")).hexdigest(),
+                    )
                     return str(text)
         if isinstance(response, dict):
             out = response.get("output", {})
             if isinstance(out, dict):
                 candidate = out.get("text")
                 if candidate:
-                    logger.debug("Qwen 返回: %s", str(candidate)[:120])
+                    logger.debug(
+                        "Qwen returned candidate metadata: chars=%d sha256=%s",
+                        len(str(candidate)),
+                        hashlib.sha256(str(candidate).encode("utf-8")).hexdigest(),
+                    )
                     return str(candidate)
         return ""
