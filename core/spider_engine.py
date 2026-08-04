@@ -7,14 +7,28 @@ import inspect
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit
 
 from playwright.async_api import async_playwright
 
+from core.extraction_pipeline import FieldExtractionPipeline
 from core.llm_repair import LLMRepair
+from core.quality_gate import QualityGate
+from core.repair_persistence import RepairPersistence
 
 
 logger = logging.getLogger(__name__)
 _BROWSER_CLEANUP_TIMEOUT_SECONDS = 2.0
+
+
+def _literal_config_bool(value: Any, *, default: bool, label: str) -> bool:
+    """Accept only YAML/JSON booleans for security-relevant switches."""
+
+    if value is None:
+        return default
+    if not isinstance(value, bool):
+        raise TypeError(f"{label} must be true or false, not {type(value).__name__}.")
+    return value
 
 
 async def _cancel_and_drain(task: "asyncio.Task[Any]") -> None:
@@ -77,6 +91,11 @@ except Exception:  # pragma: no cover
     except Exception:  # pragma: no cover
         ScraplingSelector = None  # type: ignore[assignment]
 
+try:
+    from scrapling.core.storage import SQLiteStorageSystem as ScraplingSQLiteStorage
+except Exception:  # pragma: no cover
+    ScraplingSQLiteStorage = None  # type: ignore[assignment]
+
 class GenericSpider:
     def __init__(self, config: Dict[str, Any], network_policy: Any = None):
         self.config = config or {}
@@ -91,22 +110,78 @@ class GenericSpider:
         self.actions = self.config.get("actions", [])
         self.fields = self.config.get("fields", [])
         self.payload_key = self.config.get("payload_key", "payload")
-        self.enable_adaptive = bool(self.config.get("enable_adaptive", True))
+        self.enable_adaptive = _literal_config_bool(
+            self.config.get("enable_adaptive"),
+            default=True,
+            label="enable_adaptive",
+        )
         self.llm_config = self.config.get("llm", {})
-        self.enable_llm_repair = bool(self.llm_config.get("enable_repair", False))
+        if not isinstance(self.llm_config, dict):
+            raise TypeError("llm must be a mapping.")
+        self.enable_llm_repair = _literal_config_bool(
+            self.llm_config.get("enable_repair"),
+            default=False,
+            label="llm.enable_repair",
+        )
         self.llm_repair = LLMRepair(self.llm_config) if self.enable_llm_repair else None
+        repair_config = self.config.get("repair_memory", {})
+        if not isinstance(repair_config, dict):
+            repair_config = {}
+        repair_enabled = _literal_config_bool(
+            repair_config.get("enabled"),
+            default=False,
+            label="repair_memory.enabled",
+        )
+        repair_path = repair_config.get("path")
+        self.quality_gate = QualityGate()
+        self.repair_memory = RepairPersistence(
+            str(repair_path) if repair_path else None,
+            enabled=repair_enabled,
+        )
+        self.extraction_pipeline = FieldExtractionPipeline(
+            quality_gate=self.quality_gate,
+            repair_memory=self.repair_memory,
+        )
+        self._adapter_post_process = None
         self.scrapling_cache: Dict[int, Dict[str, Any]] = {}
+        self._scrapling_storages: Dict[str, Any] = {}
         self.max_pages = int(self.pagination.get("max_pages", 1))
         self.results: List[Dict[str, Any]] = []
 
+    @classmethod
+    def from_adapter(
+        cls,
+        adapter: Any,
+        start_url: str,
+        *,
+        network_policy: Any = None,
+        **overrides: Any,
+    ) -> "GenericSpider":
+        """Build a spider from an adapter and enable its post-processing hook."""
+
+        spider = cls(
+            adapter.to_config(start_url, **overrides),
+            network_policy=network_policy,
+        )
+        spider._adapter_post_process = adapter.post_process
+        return spider
+
     def _collect_start_urls(self) -> List[str]:
         urls: List[str] = []
+        seen: set[str] = set()
+
+        def append_once(value: Any) -> None:
+            if not isinstance(value, str):
+                return
+            normalized = value.strip()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                urls.append(normalized)
+
         start_url = self.config.get("start_url")
-        if isinstance(start_url, str) and start_url.strip():
-            urls.append(start_url.strip())
+        append_once(start_url)
         for value in self.config.get("start_urls", []) or []:
-            if isinstance(value, str) and value.strip():
-                urls.append(value.strip())
+            append_once(value)
         return urls
 
     @staticmethod
@@ -200,6 +275,35 @@ class GenericSpider:
 
         return {k: v for k, v in candidate_kwargs.items() if k in sig.parameters}
 
+    def _scrapling_storage_for_url(self, url: str) -> Any:
+        """Return private, in-memory adaptive state for one target host."""
+
+        if ScraplingSQLiteStorage is None:
+            return None
+        try:
+            parsed = urlsplit(url)
+            storage_key = (parsed.hostname or "default").rstrip(".").lower()
+        except ValueError:
+            storage_key = "default"
+        if storage_key in self._scrapling_storages:
+            return self._scrapling_storages[storage_key]
+
+        storage_factory = getattr(ScraplingSQLiteStorage, "__wrapped__", None)
+        if storage_factory is None:
+            logger.warning("Scrapling storage API is incompatible; adaptive extraction is disabled.")
+            return None
+        try:
+            storage = storage_factory(storage_file=":memory:", url=url)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Could not initialize in-memory Scrapling storage: %s", exc)
+            return None
+        self._scrapling_storages[storage_key] = storage
+        return storage
+
+    def _close_scrapling_storages(self) -> None:
+        self.scrapling_cache.clear()
+        self._scrapling_storages.clear()
+
     async def _extract_playwright_field(
         self,
         target: Any,
@@ -271,18 +375,17 @@ class GenericSpider:
         if node is not None:
             html = f"<div>{html}</div>"
 
+        page_url = str(getattr(page, "url", "default") or "default")
+        storage = self._scrapling_storage_for_url(page_url)
+        if storage is None:
+            return None
         try:
             selector_obj = ScraplingSelector(
                 html,
                 adaptive=self.enable_adaptive,
-                url=getattr(page, "url", "default"),
+                url=page_url,
+                _storage=storage,
             )
-        except TypeError:
-            try:
-                selector_obj = ScraplingSelector(html, adaptive=True, url=getattr(page, "url", "default"))
-            except Exception as exc:  # pragma: no cover
-                logger.warning("Scrapling 选择器初始化失败: %s", exc)
-                return None
         except Exception as exc:  # pragma: no cover
             logger.warning("Scrapling 选择器初始化失败: %s", exc)
             return None
@@ -432,74 +535,90 @@ class GenericSpider:
         context_node: Optional[Any] = None,
     ) -> str:
         selector = self._readable_path(field.get("selector"))
-        if not selector:
-            return ""
-
         attr = self._readable_path(field.get("attr"))
         field_name = self._readable_path(field.get("name"))
         field_description = self._readable_path(field.get("description")) or field_name
+        scrapling_node = None if context_node is page else context_node
 
-        value = await self._extract_playwright_field(context_node or page, selector, attr)
-        if value:
-            # Preserve a successful selector as Scrapling's baseline so a later
-            # page revision has an adaptive reference instead of starting cold.
-            if self.enable_adaptive:
-                await self._extract_from_scrapling(
-                    page=page,
-                    selector=selector,
-                    attr=attr,
-                    node=context_node,
-                    identifier=field_name or selector,
-                )
-            return value
-
-        value = ""
-        if self.enable_adaptive:
-            value = await self._extract_from_scrapling(
-                page=page,
-                selector=selector,
-                attr=attr,
-                node=context_node,
-                identifier=field_name or selector,
+        async def extract_selector(candidate: str, candidate_attr: Optional[str]) -> str:
+            return await self._extract_playwright_field(
+                context_node or page,
+                candidate,
+                candidate_attr or "",
             )
-            if value:
-                logger.info(
-                    "ADAPTIVE_SUCCESS field=%s, selector=%s",
-                    field_name,
-                    selector,
-                )
-                return value
 
-        if not self.enable_llm_repair or self.llm_repair is None:
-            if not value:
-                logger.debug("adaptive/LLM 全部未启用或均失败：selector=%s, name=%s", selector, field_name)
-            return value
+        async def observe_configured(candidate: str) -> None:
+            if not self.enable_adaptive:
+                return
+            await self._extract_from_scrapling(
+                page=page,
+                selector=candidate,
+                attr=attr,
+                node=scrapling_node,
+                identifier=field_name or candidate,
+            )
 
-        context_html = await self._collect_repair_context(page, context_node=context_node)
-        repaired_selector = await self.llm_repair.repair_selector(
-            page=page,
-            field_name=field_name,
-            field_description=field_description,
-            failed_selector=selector,
-            context_html_or_screenshot=context_html,
+        async def extract_adaptive(
+            candidate: str,
+            candidate_attr: Optional[str],
+            identifier: str,
+        ) -> str:
+            return await self._extract_from_scrapling(
+                page=page,
+                selector=candidate,
+                attr=candidate_attr or "",
+                node=scrapling_node,
+                identifier=identifier or candidate,
+            )
+
+        async def generate_llm_candidate() -> str:
+            if not self.enable_llm_repair or self.llm_repair is None:
+                return ""
+            context_html = await self._collect_repair_context(
+                page,
+                context_node=scrapling_node,
+            )
+            return await self.llm_repair.repair_selector(
+                page=page,
+                field_name=field_name,
+                field_description=field_description,
+                failed_selector=selector,
+                context_html_or_screenshot=context_html,
+            )
+
+        result = await self.extraction_pipeline.extract(
+            field,
+            page_url=str(getattr(page, "url", "")),
+            selector_extractor=extract_selector,
+            adaptive_extractor=extract_adaptive if self.enable_adaptive else None,
+            llm_candidate=generate_llm_candidate if self.enable_llm_repair else None,
+            configured_observer=observe_configured,
+            llm_trigger_confidence=float(
+                self.config.get("repair_episode_confidence", 0.8)
+            ),
         )
-        if not repaired_selector or repaired_selector == selector:
-            logger.debug("LLM 未返回有效替代 selector：field=%s, original=%s", field_name, selector)
-            return ""
-
-        repaired_value = await self._extract_playwright_field(context_node or page, repaired_selector, attr)
-        if repaired_value:
+        if result.method == "scrapling_adaptive":
+            logger.info("ADAPTIVE_SUCCESS field=%s, selector=%s", field_name, result.selector)
+        elif result.method == "llm_text":
             logger.info(
-                "LLM 已修复并提取字段: field=%s, page=%s, selector=%s -> %s",
+                "LLM 已修复并提取字段: field=%s, page=%s, selector=%s",
                 field_name,
                 getattr(page, "url", ""),
-                repaired_selector,
-                repaired_value,
+                result.selector,
             )
-            return repaired_value
+        elif result.method == "exhausted":
+            logger.debug("所有提取/修复层均失败：selector=%s, name=%s", selector, field_name)
+        return result.value
 
-        logger.warning("LLM修复后仍未提取到内容: field=%s, selector=%s", field_name, repaired_selector)
-        return ""
+    def _has_repair_path(self, field: Dict[str, Any]) -> bool:
+        if self._readable_path(field.get("selector")):
+            return True
+        raw_fallbacks = field.get("fallback_selectors", []) or []
+        if isinstance(raw_fallbacks, (list, tuple)) and any(
+            isinstance(value, str) and value.strip() for value in raw_fallbacks
+        ):
+            return True
+        return bool(self.repair_memory.enabled or self.enable_llm_repair)
 
     async def _extract_fields(self, page, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         item_selector = self.config.get("item_selector") or self.config.get("list_item_selector")
@@ -528,8 +647,7 @@ class GenericSpider:
                     record[name] = value
                     continue
 
-                selector = self._readable_path(field.get("selector"))
-                if not selector:
+                if not self._has_repair_path(field):
                     continue
 
                 target = node if node is not None and field.get("scope") != "page" else page
@@ -601,6 +719,7 @@ class GenericSpider:
             await self._prepare_page(page)
             if delay := int(self.pagination.get("delay_ms", 0) or 0):
                 await page.wait_for_timeout(delay)
+            self.scrapling_cache[id(page)] = {}
             page_index += 1
 
         return records
@@ -664,9 +783,15 @@ class GenericSpider:
                     await _close_browser_resource(context, "browser context")
                 if browser is not None:
                     await _close_browser_resource(browser, "browser")
+                self._close_scrapling_storages()
         finally:
             await _close_playwright_manager(playwright_manager)
 
+        if self._adapter_post_process is not None:
+            processed = self._adapter_post_process(self.results)
+            if not isinstance(processed, list):
+                raise TypeError("Adapter post_process() must return a list of records.")
+            self.results = processed
         return self.results
 
     def save_json(self, records: List[Dict[str, Any]], out_file: Path) -> None:

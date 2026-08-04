@@ -8,8 +8,8 @@
 - 卖家/店铺信息（可选）
 - 评分（可选）
 
-支持域名：taobao.com, tmall.com, jd.com, pinduoduo.com,
-          amazon.com, ebay.com, shopee.com, 等。
+下列域名字符串仅用于调用方显式选择适配器时的候选匹配；它们不是经过
+验证的网站支持清单。v2.1 只使用仓库内合成夹具验证字段管线。
 """
 
 from __future__ import annotations
@@ -23,14 +23,16 @@ from .base import ExtractionField, PlatformAdapter
 class ECommerceAdapter(PlatformAdapter):
     """电商平台通用适配器。
 
-    自动匹配主流电商域名，提供通用的商品字段提取规则。
-    适用于商品列表页和详情页。
+    提供一组宽泛的候选商品字段规则。状态为 ``Limited``；只有通过
+    ``GenericSpider.from_adapter`` 显式使用时才会执行，Crawler 不会按域名
+    自动套用，也不据此声称兼容任何列出的真实平台。
     """
 
     platform_name = "ecommerce"
     platform_version = "1.0"
+    capability_status = "Limited"
 
-    # 支持的电商域名（子域名自动匹配）
+    # 候选域名提示，不是已验证支持清单。
     ECOMMERCE_DOMAINS: List[str] = [
         "taobao.com",
         "tmall.com",
@@ -179,8 +181,8 @@ class ECommerceAdapter(PlatformAdapter):
         }
 
     def get_stealth_profile(self) -> Dict[str, Any]:
-        # 电商网站通常有较强的反爬措施
-        return {"stealth": True}
+        # 合成夹具不需要 stealth；适配器不提供风控或检测规避能力。
+        return {"stealth": False}
 
     def post_process(self, records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """清洗电商数据：价格标准化、空值处理。"""

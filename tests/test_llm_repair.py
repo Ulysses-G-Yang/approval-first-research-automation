@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from core.llm_repair import LLMRepair
 
@@ -15,6 +15,13 @@ class FakePage:
 
 
 class LLMRepairTests(unittest.IsolatedAsyncioTestCase):
+    def test_default_provider_is_local_and_enable_switch_is_strict(self) -> None:
+        repair = LLMRepair({"enable_repair": True})
+        self.assertEqual(repair.provider, "ollama")
+        self.assertEqual(repair.model, "qwen3")
+        with self.assertRaisesRegex(TypeError, "true or false"):
+            LLMRepair({"enable_repair": "false"})  # type: ignore[arg-type]
+
     def make_repair(self, provider: str = "gemini", timeout: float = 0.1) -> LLMRepair:
         with patch.object(LLMRepair, "_load_api_key", return_value="test-key"):
             repair = LLMRepair(
@@ -42,11 +49,60 @@ class LLMRepairTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second, ".title")
         self.assertEqual(call.call_count, 1)
 
+    async def test_same_url_with_a_new_page_version_does_not_reuse_candidate(self) -> None:
+        repair = self.make_repair()
+        page = FakePage()
+        with patch.object(
+            repair,
+            "_repair_with_gemini",
+            side_effect=[".title-v1", ".title-v2"],
+        ) as call:
+            first = await repair.repair_selector(
+                page,
+                "title",
+                "标题",
+                ".old",
+                "<h1>version one</h1>",
+            )
+            second = await repair.repair_selector(
+                page,
+                "title",
+                "标题",
+                ".old",
+                "<h1>version two</h1>",
+            )
+
+        self.assertEqual(first, ".title-v1")
+        self.assertEqual(second, ".title-v2")
+        self.assertEqual(call.call_count, 2)
+
     async def test_empty_provider_response_degrades_to_empty_selector(self) -> None:
         repair = self.make_repair("qwen")
         with patch.object(repair, "_repair_with_qwen", return_value=""):
             value = await repair.repair_selector(FakePage(), "title", "标题", ".old", "<h1>Example</h1>")
         self.assertEqual(value, "")
+
+    async def test_local_ollama_provider_needs_no_api_key(self) -> None:
+        repair = LLMRepair(
+            {
+                "enable_repair": True,
+                "provider": "ollama",
+                "model": "qwen3",
+                "timeout": 1,
+            }
+        )
+        local = AsyncMock(return_value=".local-title")
+        with patch.object(repair, "_repair_with_ollama", local):
+            value = await repair.repair_selector(
+                FakePage(),
+                "title",
+                "标题",
+                ".old",
+                "<h1>Example</h1>",
+            )
+
+        self.assertEqual(value, ".local-title")
+        local.assert_awaited_once()
 
     async def test_invalid_provider_response_is_rejected(self) -> None:
         repair = self.make_repair()

@@ -52,6 +52,15 @@ class FakeAdaptiveSelector:
 
 
 class GenericSpiderExtractionTests(unittest.IsolatedAsyncioTestCase):
+    def test_security_relevant_switches_require_literal_booleans(self) -> None:
+        invalid_configs = [
+            {"llm": {"enable_repair": "false"}},
+            {"repair_memory": {"enabled": "false"}},
+        ]
+        for extra in invalid_configs:
+            with self.subTest(extra=extra), self.assertRaises(TypeError):
+                GenericSpider({"start_url": "https://example.test", **extra})
+
     def test_fixture_supports_regular_css_selector(self) -> None:
         html = (FIXTURES / "listing-v1.html").read_text(encoding="utf-8")
         values = Selector(html).css(".title::text").getall()
@@ -92,6 +101,136 @@ class GenericSpiderExtractionTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(value, "")
+
+    async def test_scrapling_adaptive_state_is_private_and_memory_only(self) -> None:
+        constructed: list[dict[str, object]] = []
+
+        class RecordingSelector:
+            def __init__(self, _html: str, **kwargs: object):
+                constructed.append(kwargs)
+
+            def css(self, _selector: str, *, adaptive: bool = False, **_kwargs):
+                return ["memory-only"] if adaptive else []
+
+        page = FakePage("<main>fixture</main>")
+        spider = GenericSpider({"enable_adaptive": True})
+        with patch("core.spider_engine.ScraplingSelector", RecordingSelector):
+            value = await spider._extract_field_adaptive(
+                page,
+                {"name": "title", "selector": ".missing"},
+            )
+
+        self.assertEqual(value, "memory-only")
+        storage = constructed[0]["_storage"]
+        self.assertEqual(getattr(storage, "storage_file"), ":memory:")
+        second = GenericSpider({"enable_adaptive": True})
+        self.assertIsNot(
+            storage,
+            second._scrapling_storage_for_url(page.url),
+        )
+        spider._close_scrapling_storages()
+        second._close_scrapling_storages()
+
+    def test_start_urls_are_stably_deduplicated(self) -> None:
+        spider = GenericSpider(
+            {
+                "start_url": "https://one.invalid/",
+                "start_urls": [
+                    "https://one.invalid/",
+                    "https://two.invalid/",
+                    "https://two.invalid/",
+                ],
+            }
+        )
+        self.assertEqual(
+            spider.start_urls,
+            ["https://one.invalid/", "https://two.invalid/"],
+        )
+
+    async def test_legacy_source_keeps_pre_v21_precedence_over_selector(self) -> None:
+        page = FakePage(
+            "<main>fixture</main>",
+            {".fallback": FakeElement("selector-value")},
+        )
+        spider = GenericSpider(
+            {
+                "enable_adaptive": False,
+                "fields": [
+                    {
+                        "name": "title",
+                        "source": "legacy_payload.title",
+                        "selector": ".fallback",
+                    }
+                ],
+            }
+        )
+
+        records = await spider._extract_fields(page, {"legacy_payload": {}})
+
+        self.assertEqual(records, [{"title": ""}])
+
+    async def test_scrapling_cache_is_cleared_between_paginated_pages(self) -> None:
+        class VersionedSelector:
+            def __init__(self, html: str, **_kwargs):
+                self.html = html
+
+            def css(self, _selector: str, *, adaptive: bool = False, **_kwargs):
+                if not adaptive:
+                    return []
+                return ["Second page"] if "second-version" in self.html else ["First page"]
+
+        class NextButton:
+            def __init__(self, page):
+                self.page = page
+
+            async def get_attribute(self, _name: str):
+                return None
+
+            async def click(self) -> None:
+                self.page.page_number = 2
+                self.page.html = "<main>second-version</main>"
+                self.page.url = "https://example.test/list?page=2"
+
+        class PaginatedPage(FakePage):
+            def __init__(self):
+                super().__init__("<main>first-version</main>")
+                self.page_number = 1
+
+            async def goto(self, url: str) -> None:
+                self.url = url
+
+            async def wait_for_load_state(self, **_kwargs) -> None:
+                return None
+
+            async def wait_for_timeout(self, _delay: int) -> None:
+                return None
+
+            async def query_selector(self, selector: str):
+                if selector == ".next":
+                    return NextButton(self) if self.page_number == 1 else None
+                return await super().query_selector(selector)
+
+        page = PaginatedPage()
+        spider = GenericSpider(
+            {
+                "start_url": page.url,
+                "enable_adaptive": True,
+                "pagination": {
+                    "enabled": True,
+                    "max_pages": 2,
+                    "next_selector": ".next",
+                },
+                "fields": [{"name": "title", "selector": ".broken"}],
+            }
+        )
+
+        with patch("core.spider_engine.ScraplingSelector", VersionedSelector):
+            records = await spider._crawl_pages(page, page.url)
+
+        self.assertEqual(
+            [record["title"] for record in records],
+            ["First page", "Second page"],
+        )
 
     async def test_optional_network_policy_is_installed_without_changing_standalone_config(self) -> None:
         class FakePageForRun:
