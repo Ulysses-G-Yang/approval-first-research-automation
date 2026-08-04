@@ -2,6 +2,17 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing annotated v* tag to publish; leave empty for dry-run"
+        required: false
+        default: ""
+        type: string
+      expected_tag_object:
+        description: "Expected 40-character annotated tag object SHA; required with release_tag"
+        required: false
+        default: ""
+        type: string
   push:
     tags:
       - "v*"
@@ -9,28 +20,94 @@ on:
 permissions:
   contents: read
 
+env:
+  RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+  IS_TAG_RELEASE: ${{ (github.event_name == 'push' && github.ref_type == 'tag') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '') }}
+
 jobs:
+  preflight:
+    name: Resolve immutable release source
+    runs-on: ubuntu-latest
+    outputs:
+      source_commit: ${{ steps.resolve.outputs.source_commit }}
+      tag_object: ${{ steps.resolve.outputs.tag_object }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve and lock release provenance
+        id: resolve
+        shell: bash
+        env:
+          EXPECTED_TAG_OBJECT: ${{ inputs.expected_tag_object || '' }}
+        run: |
+          set -euo pipefail
+          if [[ "${IS_TAG_RELEASE}" == "true" ]]; then
+            if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Release tag must match vX.Y.Z: ${RELEASE_TAG}" >&2
+              exit 1
+            fi
+            if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+              if [[ ! "${EXPECTED_TAG_OBJECT}" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "Manual release recovery requires the expected annotated tag object SHA." >&2
+                exit 1
+              fi
+            fi
+
+            git fetch --force --no-tags origin \
+              "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+            tag_type="$(git cat-file -t "refs/tags/${RELEASE_TAG}")"
+            if [[ "${tag_type}" != "tag" ]]; then
+              echo "Release tags must be annotated tags." >&2
+              exit 1
+            fi
+            tag_object="$(git rev-parse "refs/tags/${RELEASE_TAG}")"
+            source_commit="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
+            if [[ -n "${EXPECTED_TAG_OBJECT}" && "${tag_object}" != "${EXPECTED_TAG_OBJECT}" ]]; then
+              echo "Release tag object mismatch: ${tag_object} != ${EXPECTED_TAG_OBJECT}" >&2
+              exit 1
+            fi
+            if [[ "${GITHUB_EVENT_NAME}" == "push" && "${source_commit}" != "${GITHUB_SHA}" ]]; then
+              echo "Pushed tag commit does not match the workflow source: ${source_commit} != ${GITHUB_SHA}" >&2
+              exit 1
+            fi
+            echo "Locked annotated release tag ${RELEASE_TAG}: object=${tag_object}, commit=${source_commit}."
+          else
+            if [[ -n "${EXPECTED_TAG_OBJECT}" ]]; then
+              echo "expected_tag_object is only valid with release_tag." >&2
+              exit 1
+            fi
+            tag_object=""
+            source_commit="$(git rev-parse HEAD)"
+            echo "Locked dry-run source commit ${source_commit}."
+          fi
+          {
+            echo "source_commit=${source_commit}"
+            echo "tag_object=${tag_object}"
+          } >> "${GITHUB_OUTPUT}"
+
   build:
     name: Build release artifacts once
+    needs: preflight
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          ref: ${{ needs.preflight.outputs.source_commit }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip build packaging twine
       - name: Validate source/tag version
         shell: bash
+        env:
+          SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
         run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            tag_type="$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")"
-            if [[ "${tag_type}" != "tag" ]]; then
-              echo "Release tags must be annotated tags." >&2
-              exit 1
-            fi
-            python scripts/release_gate.py --tag "${GITHUB_REF_NAME}"
+          if [[ "$(git rev-parse HEAD)" != "${SOURCE_COMMIT}" ]]; then
+            echo "Release checkout does not match locked source commit." >&2
+            exit 1
+          fi
+          if [[ "${IS_TAG_RELEASE}" == "true" ]]; then
+            python scripts/release_gate.py --tag "${RELEASE_TAG}"
+            echo "Validated release source ${RELEASE_TAG} at ${SOURCE_COMMIT}."
           else
             python scripts/release_gate.py
           fi
@@ -39,8 +116,8 @@ jobs:
       - name: Validate artifact metadata and write checksums
         shell: bash
         run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            python scripts/release_gate.py --tag "${GITHUB_REF_NAME}" --dist dist --write-checksums
+          if [[ "${IS_TAG_RELEASE}" == "true" ]]; then
+            python scripts/release_gate.py --tag "${RELEASE_TAG}" --dist dist --write-checksums
           else
             python scripts/release_gate.py --dist dist --write-checksums
           fi
@@ -55,9 +132,12 @@ jobs:
 
   verify-source:
     name: Unit tests and benchmark
+    needs: preflight
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.source_commit }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -68,7 +148,7 @@ jobs:
 
   verify-wheel:
     name: Verify same wheel (${{ matrix.label }})
-    needs: build
+    needs: [preflight, build]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -80,6 +160,8 @@ jobs:
             label: Windows
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.source_commit }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -120,10 +202,12 @@ jobs:
 
   verify-sdist:
     name: Verify sdist installation
-    needs: build
+    needs: [preflight, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.source_commit }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -151,72 +235,130 @@ jobs:
 
   release:
     name: Create immutable GitHub Release
-    if: github.event_name == 'push' && github.ref_type == 'tag'
-    needs: [build, verify-source, verify-wheel, verify-sdist]
+    if: >-
+      (github.event_name == 'push' && github.ref_type == 'tag') ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+    needs: [preflight, build, verify-source, verify-wheel, verify-sdist]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.source_commit }}
       - uses: actions/download-artifact@v4
         with:
           name: release-dist
           path: dist
-      - name: Refuse to overwrite an existing release
+      - name: Revalidate provenance, upload exactly three assets, then publish
         env:
           GH_TOKEN: ${{ github.token }}
+          EXPECTED_TAG_OBJECT: ${{ needs.preflight.outputs.tag_object }}
+          EXPECTED_COMMIT: ${{ needs.preflight.outputs.source_commit }}
         shell: bash
         run: |
-          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            echo "Release ${GITHUB_REF_NAME} already exists; refusing to overwrite it." >&2
-            exit 1
-          fi
-      - name: Create verified draft, upload exactly three assets, then publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          created=0
-          cleanup_draft() {
-            if [[ "${created}" == "1" ]]; then
-              gh release delete "${GITHUB_REF_NAME}" \
-                --repo "${GITHUB_REPOSITORY}" --yes || true
+          set -Eeuo pipefail
+
+          verify_remote_tag() {
+            git fetch --force --no-tags origin \
+              "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+            local actual_type actual_object actual_commit
+            actual_type="$(git cat-file -t "refs/tags/${RELEASE_TAG}")"
+            actual_object="$(git rev-parse "refs/tags/${RELEASE_TAG}")"
+            actual_commit="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
+            if [[ "${actual_type}" != "tag" ]]; then
+              echo "Release tag is no longer annotated." >&2
+              return 1
+            fi
+            if [[ "${actual_object}" != "${EXPECTED_TAG_OBJECT}" ]]; then
+              echo "Release tag object changed: ${actual_object} != ${EXPECTED_TAG_OBJECT}" >&2
+              return 1
+            fi
+            if [[ "${actual_commit}" != "${EXPECTED_COMMIT}" ]]; then
+              echo "Release tag commit changed: ${actual_commit} != ${EXPECTED_COMMIT}" >&2
+              return 1
+            fi
+            if [[ "$(git rev-parse HEAD)" != "${EXPECTED_COMMIT}" ]]; then
+              echo "Release checkout changed after preflight." >&2
+              return 1
             fi
           }
-          trap cleanup_draft ERR
 
-          gh release create "${GITHUB_REF_NAME}" \
+          release_id=""
+          cleanup_draft() {
+            if [[ -z "${release_id}" ]]; then
+              return 0
+            fi
+            local current
+            current="$(
+              gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+                --jq '[.id, .draft] | @tsv' 2>/dev/null || true
+            )"
+            if [[ "${current}" == "${release_id}"$'\ttrue' ]]; then
+              gh api --method DELETE \
+                "repos/${GITHUB_REPOSITORY}/releases/${release_id}" >/dev/null || true
+            fi
+          }
+          trap cleanup_draft EXIT
+
+          shopt -s nullglob
+          wheels=(dist/*.whl)
+          sdists=(dist/*.tar.gz)
+          artifacts=(dist/*)
+          if (( ${#wheels[@]} != 1 || ${#sdists[@]} != 1 || ${#artifacts[@]} != 3 )) || \
+             [[ ! -f dist/SHA256SUMS.txt ]]; then
+            echo "Release requires exactly one wheel, one sdist, and SHA256SUMS.txt." >&2
+            exit 1
+          fi
+          (cd dist && sha256sum --check SHA256SUMS.txt)
+
+          mapfile -t expected_assets < <(
+            printf '%s\n' \
+              "$(basename "${wheels[0]}")" \
+              "$(basename "${sdists[0]}")" \
+              "SHA256SUMS.txt" | sort
+          )
+
+          verify_remote_tag
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+
+          gh release create "${RELEASE_TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
             --generate-notes \
-            --title "${GITHUB_REF_NAME}" \
+            --title "${RELEASE_TAG}" \
             --draft
-          created=1
-
-          gh release upload "${GITHUB_REF_NAME}" \
-            dist/*.whl dist/*.tar.gz dist/SHA256SUMS.txt \
-            --repo "${GITHUB_REPOSITORY}"
-
-          mapfile -t expected_assets < <(
-            for artifact in dist/*.whl dist/*.tar.gz dist/SHA256SUMS.txt; do
-              basename "${artifact}"
-            done | sort
-          )
-          mapfile -t actual_assets < <(
-            gh release view "${GITHUB_REF_NAME}" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --json assets --jq '.assets[].name' | sort
-          )
-          if [[ "${expected_assets[*]}" != "${actual_assets[*]}" ]]; then
-            echo "Release asset mismatch." >&2
-            printf 'expected: %s\n' "${expected_assets[*]}" >&2
-            printf 'actual:   %s\n' "${actual_assets[*]}" >&2
-            cleanup_draft
-            created=0
+          release_id="$(
+            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.id'
+          )"
+          if [[ ! "${release_id}" =~ ^[0-9]+$ ]]; then
+            echo "Could not capture the draft release ID." >&2
             exit 1
           fi
 
-          gh release edit "${GITHUB_REF_NAME}" \
+          gh release upload "${RELEASE_TAG}" \
+            dist/*.whl dist/*.tar.gz dist/SHA256SUMS.txt \
+            --repo "${GITHUB_REPOSITORY}"
+
+          mapfile -t actual_assets < <(
+            gh release view "${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --json assets --jq '.assets[].name' | sort
+          )
+          if (( ${#actual_assets[@]} != 3 )) || \
+             [[ "${expected_assets[*]}" != "${actual_assets[*]}" ]]; then
+            echo "Release asset mismatch." >&2
+            printf 'expected: %s\n' "${expected_assets[*]}" >&2
+            printf 'actual:   %s\n' "${actual_assets[*]}" >&2
+            exit 1
+          fi
+
+          verify_remote_tag
+          gh release edit "${RELEASE_TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
             --draft=false
-          created=0
-          trap - ERR
+          release_id=""
+          trap - EXIT
