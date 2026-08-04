@@ -213,7 +213,10 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertIn('gh release edit "${RELEASE_TAG}"', self.workflow)
         self.assertIn("--draft=false", self.workflow)
         self.assertIn("releases/${release_id}", self.workflow)
-        self.assertIn('"${release_id}"$\'\\ttrue\'', self.workflow)
+        self.assertIn("releases?per_page=100", self.workflow)
+        self.assertIn('.tag_name == \\\"${RELEASE_TAG}\\\" and .draft == true', self.workflow)
+        self.assertIn('"${release_id}"$\'\\ttrue\\t\'"${RELEASE_TAG}"', self.workflow)
+        self.assertNotIn("releases/tags/${RELEASE_TAG}", self.workflow)
         self.assertNotIn("gh release delete", self.workflow)
 
     def test_workflow_cannot_create_or_move_tags_or_publish_to_pypi(self) -> None:
