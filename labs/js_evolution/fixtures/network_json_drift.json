@@ -1,0 +1,26 @@
+{
+  "responses": [
+    {
+      "url": "https://fixture.invalid/assets/catalog.css",
+      "method": "GET",
+      "status": 200,
+      "resource_type": "stylesheet",
+      "content_type": "text/css",
+      "body": "body{}"
+    },
+    {
+      "url": "https://fixture.invalid/api/v2/catalog?locale=en",
+      "method": "GET",
+      "status": 200,
+      "resource_type": "fetch",
+      "content_type": "application/json",
+      "body": {
+        "payload": {
+          "products": [
+            {"name": "Northwind notebook"}
+          ]
+        }
+      }
+    }
+  ]
+}
