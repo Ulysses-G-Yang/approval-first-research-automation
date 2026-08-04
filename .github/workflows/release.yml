@@ -291,10 +291,10 @@ jobs:
             fi
             local current
             current="$(
-              gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
-                --jq '[.id, .draft] | @tsv' 2>/dev/null || true
+              gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+                --jq '[.id, .draft, .tag_name] | @tsv' 2>/dev/null || true
             )"
-            if [[ "${current}" == "${release_id}"$'\ttrue' ]]; then
+            if [[ "${current}" == "${release_id}"$'\ttrue\t'"${RELEASE_TAG}" ]]; then
               gh api --method DELETE \
                 "repos/${GITHUB_REPOSITORY}/releases/${release_id}" >/dev/null || true
             fi
@@ -332,7 +332,9 @@ jobs:
             --title "${RELEASE_TAG}" \
             --draft
           release_id="$(
-            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.id'
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq ".[] | select(.tag_name == \"${RELEASE_TAG}\" and .draft == true) | .id"
           )"
           if [[ ! "${release_id}" =~ ^[0-9]+$ ]]; then
             echo "Could not capture the draft release ID." >&2
