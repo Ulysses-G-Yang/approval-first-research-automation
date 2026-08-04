@@ -1,0 +1,222 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build release artifacts once
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip build packaging twine
+      - name: Validate source/tag version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            tag_type="$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")"
+            if [[ "${tag_type}" != "tag" ]]; then
+              echo "Release tags must be annotated tags." >&2
+              exit 1
+            fi
+            python scripts/release_gate.py --tag "${GITHUB_REF_NAME}"
+          else
+            python scripts/release_gate.py
+          fi
+      - run: python -m build
+      - run: python -m twine check dist/*
+      - name: Validate artifact metadata and write checksums
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            python scripts/release_gate.py --tag "${GITHUB_REF_NAME}" --dist dist --write-checksums
+          else
+            python scripts/release_gate.py --dist dist --write-checksums
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-dist
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+  verify-source:
+    name: Unit tests and benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e . packaging
+      - run: python -m unittest discover -s tests -v
+      - run: crawler benchmark --json --check-baseline
+
+  verify-wheel:
+    name: Verify same wheel (${{ matrix.label }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: Ubuntu
+          - os: windows-latest
+            label: Windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-dist
+          path: dist
+      - run: python -m pip install --upgrade pip packaging
+      - run: python scripts/release_gate.py --dist dist --verify-checksums
+      - name: Install the single built wheel
+        shell: python
+        run: |
+          import glob
+          import subprocess
+          import sys
+
+          wheels = glob.glob("dist/*.whl")
+          if len(wheels) != 1:
+              raise SystemExit(f"Expected one wheel: {wheels}")
+          subprocess.check_call([sys.executable, "-m", "pip", "install", wheels[0]])
+      - run: python -m pip check
+      - name: Validate installed runtime/metadata version
+        working-directory: ${{ runner.temp }}
+        shell: python
+        run: |
+          from importlib.metadata import version
+          import research_assistant
+
+          metadata = version("generic-crawler-research-assistant")
+          if metadata != research_assistant.__version__:
+              raise SystemExit(f"version mismatch: {metadata} != {research_assistant.__version__}")
+      - name: Installed-package smoke
+        working-directory: ${{ runner.temp }}
+        run: python "${{ github.workspace }}/scripts/package_smoke.py"
+      - name: Installed benchmark gate
+        working-directory: ${{ runner.temp }}
+        run: crawler benchmark --json --check-baseline
+
+  verify-sdist:
+    name: Verify sdist installation
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-dist
+          path: dist
+      - run: python -m pip install --upgrade pip packaging
+      - run: python scripts/release_gate.py --dist dist --verify-checksums
+      - name: Install the single sdist
+        shell: python
+        run: |
+          import glob
+          import subprocess
+          import sys
+
+          sdists = glob.glob("dist/*.tar.gz")
+          if len(sdists) != 1:
+              raise SystemExit(f"Expected one sdist: {sdists}")
+          subprocess.check_call([sys.executable, "-m", "pip", "install", sdists[0]])
+      - run: python -m pip check
+      - name: Sdist-installed smoke
+        working-directory: ${{ runner.temp }}
+        run: python "${{ github.workspace }}/scripts/package_smoke.py"
+
+  release:
+    name: Create immutable GitHub Release
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: [build, verify-source, verify-wheel, verify-sdist]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-dist
+          path: dist
+      - name: Refuse to overwrite an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+      - name: Create verified draft, upload exactly three assets, then publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          created=0
+          cleanup_draft() {
+            if [[ "${created}" == "1" ]]; then
+              gh release delete "${GITHUB_REF_NAME}" \
+                --repo "${GITHUB_REPOSITORY}" --yes || true
+            fi
+          }
+          trap cleanup_draft ERR
+
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --generate-notes \
+            --title "${GITHUB_REF_NAME}" \
+            --draft
+          created=1
+
+          gh release upload "${GITHUB_REF_NAME}" \
+            dist/*.whl dist/*.tar.gz dist/SHA256SUMS.txt \
+            --repo "${GITHUB_REPOSITORY}"
+
+          mapfile -t expected_assets < <(
+            for artifact in dist/*.whl dist/*.tar.gz dist/SHA256SUMS.txt; do
+              basename "${artifact}"
+            done | sort
+          )
+          mapfile -t actual_assets < <(
+            gh release view "${GITHUB_REF_NAME}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --json assets --jq '.assets[].name' | sort
+          )
+          if [[ "${expected_assets[*]}" != "${actual_assets[*]}" ]]; then
+            echo "Release asset mismatch." >&2
+            printf 'expected: %s\n' "${expected_assets[*]}" >&2
+            printf 'actual:   %s\n' "${actual_assets[*]}" >&2
+            cleanup_draft
+            created=0
+            exit 1
+          fi
+
+          gh release edit "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft=false
+          created=0
+          trap - ERR

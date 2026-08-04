@@ -13,7 +13,6 @@ from importlib.metadata import version
 from pathlib import Path
 
 
-EXPECTED_VERSION = "2.1.0.dev0"
 EXPECTED_WORKFLOWS = {
     "content_save_draft",
     "crawler_report",
@@ -31,12 +30,26 @@ def _run(command: list[str], cwd: Path) -> str:
         command,
         cwd=cwd,
         env=environment,
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
         encoding="utf-8",
     )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Command failed ({result.returncode}): {' '.join(command)}\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
     return result.stdout
+
+
+def _console_script(name: str) -> str | None:
+    discovered = shutil.which(name)
+    if discovered:
+        return discovered
+    suffix = ".exe" if os.name == "nt" else ""
+    sibling = Path(sys.executable).with_name(f"{name}{suffix}")
+    return str(sibling) if sibling.is_file() else None
 
 
 def main() -> int:
@@ -71,25 +84,40 @@ def main() -> int:
     ):
         raise RuntimeError("Installed GenericSpider did not preserve its minimal configuration.")
 
-    metadata_version = version("generic-crawler-research-assistant")
-    if metadata_version != EXPECTED_VERSION or research_assistant.__version__ != EXPECTED_VERSION:
+    expected_version = version("generic-crawler-research-assistant")
+    if research_assistant.__version__ != expected_version:
         raise RuntimeError(
-            f"Version mismatch: metadata={metadata_version}, runtime={research_assistant.__version__}"
+            f"Version mismatch: metadata={expected_version}, runtime={research_assistant.__version__}"
         )
     if set(available_workflows()) != EXPECTED_WORKFLOWS:
         raise RuntimeError(f"Bundled workflow mismatch: {available_workflows()}")
 
-    agent = shutil.which("agent")
+    agent = _console_script("agent")
     if not agent:
         raise RuntimeError("Installed console script 'agent' was not found on PATH.")
+    crawler_command = _console_script("crawler")
+    if not crawler_command:
+        raise RuntimeError("Installed console script 'crawler' was not found on PATH.")
 
-    with tempfile.TemporaryDirectory(prefix="agent-package-smoke-") as directory:
+    # The workflow already runs this script from an external temporary
+    # directory. Keeping the nested workspace under cwd also avoids Windows
+    # MAX_PATH failures caused by a second long AppData\Local\Temp prefix.
+    with tempfile.TemporaryDirectory(prefix="agent-package-smoke-", dir=Path.cwd()) as directory:
         root = Path(directory)
         source = root / "market-notes.csv"
         source.write_text("name,amount\nA,10\nB,20\n", encoding="utf-8")
         workspace_root = root / "tasks"
 
-        if _run([agent, "--version"], root).strip() != f"agent {EXPECTED_VERSION}":
+        if _run([crawler_command, "--version"], root).strip() != f"crawler {expected_version}":
+            raise RuntimeError("The installed crawler command reported an unexpected version.")
+        benchmark = _run(
+            [crawler_command, "benchmark", "--json", "--check-baseline"],
+            root,
+        )
+        if '"passed": true' not in benchmark:
+            raise RuntimeError(f"Installed crawler benchmark did not pass:\n{benchmark}")
+
+        if _run([agent, "--version"], root).strip() != f"agent {expected_version}":
             raise RuntimeError("The installed console script reported an unexpected version.")
         workflow_output = _run([agent, "list-workflows"], root)
         if not EXPECTED_WORKFLOWS.issubset(set(re.findall(r"(?m)^([a-z][a-z0-9_-]+)$", workflow_output))):
@@ -130,7 +158,7 @@ def main() -> int:
 
     print(
         "Installed distribution smoke test passed: "
-        f"{research_assistant.__version__}; primary={crawler.__class__.__name__}; "
+        f"{expected_version}; primary={crawler.__class__.__name__}; "
         f"optional={research_assistant.__name__}; packages={adapters.__name__},{workflows.__name__}"
     )
     return 0
